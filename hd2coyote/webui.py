@@ -582,7 +582,8 @@ pre{background:#11141a;border:1px solid var(--line);border-radius:8px;padding:9p
     <button onclick="act('stop')">停止</button>
     <button class="danger" onclick="act('trip')">急停</button>
     <button onclick="act('arm')">重新武装</button>
-    <button class="danger" onclick="shutdownApp()" title="输出归零并退出控制器">关闭程序</button>
+    <button class="danger" id="shutdownBtn" onclick="shutdownApp()"
+            title="输出归零并退出控制器">关闭程序</button>
   </span>
 </header>
 <main>
@@ -665,6 +666,7 @@ pre{background:#11141a;border:1px solid var(--line);border-radius:8px;padding:9p
 const RULES = {damage:'受伤', limb_injury:'肢体损伤', death:'阵亡', low_health:'低血量'};
 let CFG = null;
 let FAILS = 0;
+let LASTVER = '';
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -680,16 +682,13 @@ async function refresh() {
   catch (e) {
     // 服务器没了（比如刚点了「关闭程序」）—— 别让页面看起来还在监控
     if (++FAILS === 5) {
-      clearInterval(window.__timer);
-      document.getElementById('state').innerHTML =
-        '<span class="dot bad"></span>控制器已关闭（页面可以关掉了）';
-      document.getElementById('dwarn').textContent =
-        'ℹ️ 连不上控制器 —— 它已经退出了。要再用一次，重新运行 run.bat 或 '
-        + 'python -m hd2coyote web。';
+      markClosed('ℹ️ 连不上控制器 —— 它已经退出了。要再用一次，重新运行 run.bat 或 '
+                 + 'python -m hd2coyote web。');
     }
     return;
   }
   const c = s.controller, b = s.bridge || {};
+  LASTVER = c.version;
   document.getElementById('ver').textContent = 'v' + c.version + ' · 运行 ' + c.uptime_s + 's';
   document.getElementById('dev').textContent = '设备 ' + (c.device.connected ? '已连接' : '未连接')
         + (c.device.kind ? ' ('+c.device.kind+')' : '');
@@ -834,15 +833,33 @@ async function testPulse() {
   catch (e) { alert('测试脉冲失败：' + e.message); }
 }
 
+// 控制器已经关了：按钮禁用 + 页面明说"别再监控了"（成功和"本来就没在跑"都走这里）
+function markClosed(text) {
+  window.__closed = true;
+  if (window.__timer) { clearInterval(window.__timer); window.__timer = null; }
+  document.getElementById('state').innerHTML = '<span class="dot bad"></span>控制器已关闭';
+  document.getElementById('dwarn').textContent = text;
+  const btn = document.getElementById('shutdownBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '已关闭'; btn.title = '控制器已经退出'; }
+  document.getElementById('ver').textContent = (LASTVER ? 'v' + LASTVER : '') + ' · 已退出';
+  document.getElementById('dev').textContent = '设备 已断开';
+  document.getElementById('hk').textContent = '桥 离线';
+}
+
 async function shutdownApp() {
+  if (window.__closed) return;
   if (!confirm('关闭 hd2-coyote 控制器？\n\n会先把输出归零、断开设备，然后退出程序。')) return;
+  const btn = document.getElementById('shutdownBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '正在关闭…'; }
   try {
     const res = await api('/api/actions', {method:'POST', headers:{'Content-Type':'application/json'},
                                            body: JSON.stringify({action:'shutdown'})});
-    clearInterval(window.__timer);
-    document.getElementById('state').innerHTML = '<span class="dot bad"></span>已关闭';
-    document.getElementById('dwarn').textContent = '✓ ' + res.detail;
-  } catch (e) { alert('关闭失败：' + e.message); }
+    markClosed('✓ ' + res.detail);
+  } catch (e) {
+    // 连不上 = 它已经退出了（最常见就是又点了一次）。这不是"失败"，别吓人。
+    markClosed('✓ 控制器已经退出（连不上服务器）。要再用一次，重新运行 run.bat 或 '
+               + 'python -m hd2coyote web。');
+  }
 }
 
 loadConfig().then(loadBridge).catch(e => console.error(e));

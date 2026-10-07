@@ -260,6 +260,19 @@ class TestWebServer(unittest.TestCase):
         for bad in ("", "192.168.1.10", "10.0.0.2", "203.0.113.7", "::ffff:8.8.8.8"):
             self.assertFalse(is_loopback(bad), bad)
 
+    def test_page_shutdown_button_cannot_double_shutdown(self) -> None:
+        """踩过的坑：关成功后按钮没禁用，再点一次弹 `关闭失败: Failed to fetch`。"""
+        from hd2coyote.webui import PAGE
+
+        self.assertIn('id="shutdownBtn"', PAGE)
+        self.assertIn("function markClosed", PAGE)
+        # 成功与"连不上（已经关了）"都走 markClosed，不再弹"关闭失败"
+        self.assertNotIn("alert('关闭失败", PAGE)
+        self.assertIn("if (window.__closed) return;", PAGE)
+        self.assertIn("btn.disabled = true", PAGE)
+        # 轮询发现服务器没了 → 也用同一个收尾函数
+        self.assertIn("markClosed('ℹ️ 连不上控制器", PAGE)
+
     def test_control_actions_appear_in_event_log(self) -> None:
         http("POST", self.base + "/api/actions", {"action": "trip"})
         http("POST", self.base + "/api/actions", {"action": "arm"})
