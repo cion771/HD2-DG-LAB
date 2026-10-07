@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import time
 import threading
 import unittest
 import urllib.error
@@ -223,6 +224,42 @@ class TestWebServer(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("未知动作", data["error"])
 
+    # ------------------------------------------------------------ 关闭程序
+    def test_shutdown_stops_engine_then_server(self) -> None:
+        """「关闭程序」必须先把输出归零/断开设备，再让服务器退出。"""
+        self.app.engine.start()
+        self.app.engine.tick()
+        status, data = http("POST", self.base + "/api/actions", {"action": "shutdown"})
+        self.assertEqual(status, 200, data)
+        self.assertTrue(data["ok"])
+        self.assertIn("输出已归零", data["detail"])
+        self.assertFalse(self.app.engine.status.running)
+        self.assertFalse(self.app.engine.device.connected)
+        deadline = time.time() + 5          # 服务器应在几秒内真的停掉
+        stopped = False
+        while time.time() < deadline:
+            try:
+                http("GET", self.base + "/api/status")
+            except Exception:
+                stopped = True
+                break
+            time.sleep(0.2)
+        self.assertTrue(stopped, "服务器没有停下来")
+        self.assertTrue(self.app.shutdown_event.is_set())
+
+    def test_shutdown_is_recorded_in_events(self) -> None:
+        http("POST", self.base + "/api/actions", {"action": "shutdown"})
+        _, data = http("GET", self.base + "/api/status")
+        self.assertTrue(any("关闭程序" in line for line in data["events"]), data["events"])
+
+    def test_loopback_check(self) -> None:
+        from hd2coyote.webui import is_loopback
+
+        for good in ("127.0.0.1", "127.0.0.5", "::1", "::1%lo0", "localhost"):
+            self.assertTrue(is_loopback(good), good)
+        for bad in ("", "192.168.1.10", "10.0.0.2", "203.0.113.7", "::ffff:8.8.8.8"):
+            self.assertFalse(is_loopback(bad), bad)
+
     def test_control_actions_appear_in_event_log(self) -> None:
         http("POST", self.base + "/api/actions", {"action": "trip"})
         http("POST", self.base + "/api/actions", {"action": "arm"})
@@ -272,3 +309,4 @@ class TestWebAppDirect(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

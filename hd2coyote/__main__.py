@@ -21,12 +21,23 @@ from pathlib import Path
 
 from . import __version__
 from .config import AppConfig, CaptureConfig
-from .device import cmd_pulse, create_device, lan_ip
-from .engine import Engine
-from .safety import SafetyGuard
 from .waves import PRESETS, build
 
+# engine / safety 是重依赖（engine 要 numpy，safety 经 device 要 websockets），
+# 而 `stop` 这种命令完全用不到它们 —— 所以在函数内部按需导入，
+# 这样"关掉控制器"永远不依赖游戏识别/设备栈是否装好。
+
+# ⚠️ `from .device import ...` 会连带导入 websockets —— 而 `stop` 之类的命令根本不需要它。
+#    所以改成用到时再导入（惰性），这样没装 websockets 的 Python 也能执行 stop/doctor 的一部分，
+#    而且 `python -m hd2coyote stop` 的启动更快。
 DEFAULT_CONFIG = "config.json"
+
+
+def _device_api():
+    """惰性取设备层的 API（首次调用才导入 websockets 等重依赖）。"""
+    from .device import cmd_pulse, create_device, lan_ip
+
+    return cmd_pulse, create_device, lan_ip
 
 
 def setup_logging(level: str = "INFO", logfile: str = "hd2coyote.log") -> None:
@@ -65,6 +76,14 @@ def cmd_web(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_stop(args: argparse.Namespace) -> int:
+    """关闭正在运行的 Web 控制台（先优雅退出，必要时强杀）。"""
+    from .console_ctl import stop_console
+
+    closed, _ = stop_console(host=args.host, port=args.port, force=not args.no_force)
+    return 0 if closed else 1
+
+
 def cmd_ui(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     from .ui import run_ui
@@ -74,6 +93,8 @@ def cmd_ui(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    from .engine import Engine
+
     overrides = {"device.kind": "mock" if args.mock else None}
     cfg = load_config(args.config, overrides)
     if args.mock:
@@ -101,6 +122,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_simulate(args: argparse.Namespace) -> int:
+    from .engine import Engine
+
     from .simulate import run_demo
 
     cfg = load_config(args.config)
@@ -139,6 +162,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     cfg = AppConfig.load(args.config)
     print(f"状态来源    : {cfg.source}（hook = 游戏内 Lua 桥；vision = 屏幕识别）")
     print(f"设备        : {cfg.device.kind} {cfg.device.host}:{cfg.device.port}")
+    _, _, lan_ip = _device_api()
     print(f"本机局域网IP: {lan_ip()}")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         busy = s.connect_ex(("127.0.0.1", cfg.device.port)) == 0
@@ -185,7 +209,10 @@ def cmd_test_pulse(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     if args.mock:
         cfg.device.kind = "mock"
+    _, create_device, _ = _device_api()
     device = create_device(cfg.device)
+    from .safety import SafetyGuard
+
     guard = SafetyGuard(cfg.safety, device)
     device.start()
     if cfg.device.kind == "socket":
@@ -216,6 +243,7 @@ def cmd_waves(args: argparse.Namespace) -> int:
         return 0
     units = build(args.name, args.ms)
     print(f"{args.name}: {len(units)} 单元 / {len(units) * 100} ms")
+    cmd_pulse, _, _ = _device_api()
     print(cmd_pulse("A", units[:10]))
     return 0
 
@@ -238,6 +266,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--bridge-dir", default="", help="桥的配置目录（默认 %%LOCALAPPDATA%%\\hd2coyote）")
     p.add_argument("--no-browser", action="store_true", help="不要自动打开浏览器")
     p.set_defaults(func=cmd_web)
+
+    p = sub.add_parser("stop", help="关闭正在运行的 Web 控制台")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8787)
+    p.add_argument("--no-force", action="store_true", help="优雅退出失败时不要强杀进程")
+    p.set_defaults(func=cmd_stop)
 
     p = sub.add_parser("run", parents=[common], help="命令行运行")
     p.add_argument("--mock", action="store_true", help="不接硬件，打印输出")

@@ -42,6 +42,14 @@ OFFSET_RANGE = {"hp": (-1, 0xFFFF), "hp_max": (-1, 0xFFFF), "limb_mask": (-1, 0x
                 "limb_shift": (0, 7), "dead": (-1, 0xFFFF)}
 
 
+def is_loopback(addr: str) -> bool:
+    """只允许本机来源执行「关闭程序」——万一有人把它开在 0.0.0.0 上，也不能被远端关掉。"""
+    if not addr:
+        return False
+    host = addr.split("%", 1)[0]          # 去掉 IPv6 的 scope id
+    return host in ("127.0.0.1", "::1", "localhost") or host.startswith("127.")
+
+
 # --------------------------------------------------------------------- 桥配置
 def bridge_dir(override: str | Path | None = None) -> Path:
     return Path(override) if override else BRIDGE_DEFAULT_DIR
@@ -243,6 +251,10 @@ class _Handler(BaseHTTPRequestHandler):
         route = self.path.split("?", 1)[0]
         body = self._read_body()
         try:
+            if route == "/api/actions" and str(body.get("action")) == "shutdown" \
+                    and not is_loopback(self.client_address[0]):
+                self._json({"error": "只允许本机（127.0.0.1）关闭程序"}, 403)
+                return
             if route == "/api/config":
                 self._json(self.app.update_config(body))
             elif route == "/api/bridge":
@@ -271,6 +283,9 @@ class WebApp:
         self.engine.on_event = self._on_event
         self._lock = threading.Lock()
         self.started_at = time.time()
+        # 「关闭程序」：置位后由服务器主循环退出（见 build_server / run_web）
+        self.shutdown_event = threading.Event()
+        self.shutdown_reason = ""
 
     # ------------------------------------------------------------ 内部
     def _note(self, text: str) -> None:
@@ -435,7 +450,24 @@ class WebApp:
             engine.device.start()
             self._note("控制台：启动设备")
             return {"ok": True, "detail": "设备已启动（可用二维码连接手机 App）"}
+        if name == "shutdown":
+            # ★ 顺序很重要：先把输出归零并停掉设备（戴着电极的人不能等），
+            #   再让 HTTP 服务器退出。engine.stop() 内部会 device.stop()，
+            #   socket 设备会先 mute()（清波形 + 强度置 0）再关连接。
+            try:
+                engine.stop()
+            except Exception as exc:
+                LOGGER.warning("停止引擎时出错：%s", exc)
+            self._note("控制台：关闭程序（输出已归零，设备已断开）")
+            self.shutdown_reason = str(payload.get("reason", "Web 控制台"))
+            # 延迟一点再退出，保证这个响应能发回浏览器
+            threading.Thread(target=self._delayed_shutdown, daemon=True).start()
+            return {"ok": True, "detail": "正在关闭：输出已归零、设备已断开，页面可以关了"}
         raise ValueError(f"未知动作：{name}")
+
+    def _delayed_shutdown(self, delay: float = 0.6) -> None:
+        time.sleep(delay)
+        self.shutdown_event.set()
 
     def qr_svg(self) -> bytes | None:
         url = getattr(self.engine.device, "qr_payload", "")
@@ -458,6 +490,17 @@ def build_server(cfg: AppConfig, config_path: Path, host: str, port: int,
     handler = type("BoundHandler", (_Handler,), {"app": app})
     httpd = ThreadingHTTPServer((host, port), handler)
     httpd.daemon_threads = True
+
+    def watchdog() -> None:
+        """等「关闭程序」的请求，然后让 serve_forever 返回（主线程收尾）。"""
+        app.shutdown_event.wait()
+        LOGGER.info("收到关闭请求（%s），正在退出", app.shutdown_reason or "Web 控制台")
+        try:
+            httpd.shutdown()
+        except Exception:  # 服务器可能已经关了
+            pass
+
+    threading.Thread(target=watchdog, name="shutdown-watchdog", daemon=True).start()
     return httpd, app
 
 
@@ -468,6 +511,7 @@ def run_web(cfg: AppConfig, config_path: Path, host: str = "127.0.0.1", port: in
     print(f"hd2-coyote Web 控制台：{url}")
     print("  · 页面里可以：看状态、调强度、改桥的档位/偏移、看日志与部署自检")
     print("  · 桥的配置改完需要重启游戏生效；控制器动作（急停/测试脉冲）立即生效")
+    print("  · 退出：网页右上角「关闭程序」，或在本窗口按 Ctrl+C")
     if host == "0.0.0.0":
         print("  ⚠️ 你把它开在了所有网卡上 —— 这个页面能触发实际输出，公网/宿舍网请勿如此")
     if open_browser:
@@ -476,10 +520,11 @@ def run_web(cfg: AppConfig, config_path: Path, host: str = "127.0.0.1", port: in
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\n正在停止……")
+        print("\n收到 Ctrl+C，正在停止……")
     finally:
-        app.engine.stop()
+        app.engine.stop()        # 内部会 device.stop()：清波形 + 强度归零 + 断开
         httpd.server_close()
+        print("控制器已关闭（输出已归零，设备已断开）。")
 
 
 # --------------------------------------------------------------------- 页面
@@ -537,6 +582,7 @@ pre{background:#11141a;border:1px solid var(--line);border-radius:8px;padding:9p
     <button onclick="act('stop')">停止</button>
     <button class="danger" onclick="act('trip')">急停</button>
     <button onclick="act('arm')">重新武装</button>
+    <button class="danger" onclick="shutdownApp()" title="输出归零并退出控制器">关闭程序</button>
   </span>
 </header>
 <main>
@@ -618,6 +664,7 @@ pre{background:#11141a;border:1px solid var(--line);border-radius:8px;padding:9p
 <script>
 const RULES = {damage:'受伤', limb_injury:'肢体损伤', death:'阵亡', low_health:'低血量'};
 let CFG = null;
+let FAILS = 0;
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -629,7 +676,19 @@ async function api(path, opts) {
 function fmtPct(v){ return (v===null||v===undefined) ? '--' : (v*100).toFixed(1)+'%'; }
 
 async function refresh() {
-  let s; try { s = await api('/api/status'); } catch (e) { return; }
+  let s; try { s = await api('/api/status'); FAILS = 0; }
+  catch (e) {
+    // 服务器没了（比如刚点了「关闭程序」）—— 别让页面看起来还在监控
+    if (++FAILS === 5) {
+      clearInterval(window.__timer);
+      document.getElementById('state').innerHTML =
+        '<span class="dot bad"></span>控制器已关闭（页面可以关掉了）';
+      document.getElementById('dwarn').textContent =
+        'ℹ️ 连不上控制器 —— 它已经退出了。要再用一次，重新运行 run.bat 或 '
+        + 'python -m hd2coyote web。';
+    }
+    return;
+  }
   const c = s.controller, b = s.bridge || {};
   document.getElementById('ver').textContent = 'v' + c.version + ' · 运行 ' + c.uptime_s + 's';
   document.getElementById('dev').textContent = '设备 ' + (c.device.connected ? '已连接' : '未连接')
@@ -775,9 +834,20 @@ async function testPulse() {
   catch (e) { alert('测试脉冲失败：' + e.message); }
 }
 
+async function shutdownApp() {
+  if (!confirm('关闭 hd2-coyote 控制器？\n\n会先把输出归零、断开设备，然后退出程序。')) return;
+  try {
+    const res = await api('/api/actions', {method:'POST', headers:{'Content-Type':'application/json'},
+                                           body: JSON.stringify({action:'shutdown'})});
+    clearInterval(window.__timer);
+    document.getElementById('state').innerHTML = '<span class="dot bad"></span>已关闭';
+    document.getElementById('dwarn').textContent = '✓ ' + res.detail;
+  } catch (e) { alert('关闭失败：' + e.message); }
+}
+
 loadConfig().then(loadBridge).catch(e => console.error(e));
 refresh();
-setInterval(refresh, 700);
+window.__timer = setInterval(refresh, 700);
 </script>
 </body>
 </html>

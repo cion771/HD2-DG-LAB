@@ -32,6 +32,25 @@ cd "E:\md\n mod\hd2-coyote"
 * **没有 `bridge_config.lua`** → addon 跑内置默认（`safe`，什么都不做）；
 * **配置档位 ≠ 上次实际运行档位** → 说明改了但没重启游戏。
 
+## 关闭
+
+三条路，任选：
+
+1. **网页右上角「关闭程序」** —— 带确认框。它会先把输出归零、清空波形、断开设备，
+   再让服务器退出；只接受**本机来源**（非 `127.0.0.1` 的请求返回 403，
+   即使误把它开在 `0.0.0.0` 上也不会被远端关掉）。退出后页面会显示"控制器已关闭"。
+2. **`stop.bat`** —— 先请求优雅退出，等端口释放；只有在没成功时才按端口找出进程强杀，
+   并明确告诉你这次是强杀。用法：`stop.bat [端口]`（默认 8787）。
+3. **`python -m hd2coyote stop [--port 8787] [--no-force]`** —— 同一套逻辑的 CLI。
+   想先看它打算做什么就加 `--no-force`（只优雅退出，不强杀）。
+
+> 顶部的「急停」只是**静音**（需要点「重新武装」才恢复输出），它不会退出程序；
+> 要退出用「关闭程序」。
+
+任何一条路都不会让电极停在输出状态：`engine.stop()` 内部会 `device.stop()`，
+socket 设备先 `mute()`（`clear-1/2` + 强度置 0）再断开连接。
+若走的是强杀（第 2 条的兜底），电极侧要靠手机 App 在连接断开后自行停止 —— 所以优先用前两条。
+
 ## 接口
 
 | 方法 | 路径 | 作用 |
@@ -41,7 +60,7 @@ cd "E:\md\n mod\hd2-coyote"
 | GET | `/api/config` | 控制器配置（`config.json`） |
 | POST | `/api/config` | 局部合并控制器配置（rules/safety/device/hook/source），落盘并立即生效 |
 | POST | `/api/bridge` | 写 `bridge_config.lua`（校验 + 备份为 `.lua.bak`） |
-| POST | `/api/actions` | `start` / `stop` / `arm` / `trip` / `test_pulse` / `device_start` |
+| POST | `/api/actions` | `start` / `stop` / `arm` / `trip` / `test_pulse` / `device_start` / **`shutdown`** |
 | GET | `/qr.svg` | 手机 App 扫码用的二维码（装了 `qrcode` 时） |
 
 `POST /api/bridge` 会校验：`mode ∈ {safe,net,menu,recon,live}`、端口 `1024..65535`、
