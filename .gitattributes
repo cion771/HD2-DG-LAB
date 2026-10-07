@@ -1,0 +1,10 @@
+# 统一换行：Lua 桥必须保持 LF（打包与加载器都按 LF 处理），.bat 用 CRLF
+* text=auto eol=lf
+*.lua text eol=lf
+*.bat text eol=crlf
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.zip binary
+*.png binary
+*.jpg binary

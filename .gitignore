@@ -1,0 +1,26 @@
+# 运行时产物（每个人本机不同，不入库）
+config.json
+hd2coyote.log
+*.log
+bridge_config.lua
+bridge_config.lua.bak
+*.bak
+templates/
+
+# 第三方 mod 的源码导出（不属于本项目，见 THIRD_PARTY.md）
+ref/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# 编辑器
+.vscode/
+.idea/
+
+# 打包产物
+build/
+dist/

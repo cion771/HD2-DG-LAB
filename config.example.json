@@ -1,0 +1,113 @@
+{
+  "source": "hook",
+  "device": {
+    "kind": "socket",
+    "host": "0.0.0.0",
+    "port": 9999,
+    "channel": "both",
+    "advertise_ip": ""
+  },
+  "hook": {
+    "host": "127.0.0.1",
+    "port": 47777,
+    "timeout_s": 2.0
+  },
+  "capture": {
+    "monitor": 1,
+    "region": null,
+    "fps": 15.0,
+    "backend": "auto"
+  },
+  "hud": {
+    "hp_bar": null,
+    "injury_zone": null,
+    "injury_slots": 3,
+    "injury_slot_names": [
+      "左肢",
+      "躯干",
+      "右肢"
+    ],
+    "death_probe": null,
+    "death_template": ""
+  },
+  "detect": {
+    "damage_min_pct": 4.0,
+    "low_health_pct": 35.0,
+    "recover_pct": 60.0,
+    "dead_hold_s": 0.8,
+    "revive_ignore_damage_s": 2.0,
+    "injury_min_fraction": 0.015,
+    "injury_clear_s": 0.5,
+    "bleeding_min_fraction": 0.01,
+    "death_template_threshold": 0.72,
+    "capture_error_limit": 30
+  },
+  "safety": {
+    "max_pct": 30.0,
+    "max_absolute": 40,
+    "attack_ms": 150.0,
+    "release_ms": 800.0,
+    "max_event_ms": 8000.0,
+    "emergency_key": "F12",
+    "pause_key": "F11",
+    "mute_on_focus_loss": false,
+    "game_window_title": "HELLDIVERS",
+    "max_session_seconds": 0.0,
+    "master_multiplier": 1.0
+  },
+  "rules": {
+    "damage": {
+      "enabled": true,
+      "base_pct": 16,
+      "wave": "pinch",
+      "duration_ms": 400,
+      "channel": "A",
+      "cooldown_ms": 400,
+      "priority": 1,
+      "freq": null,
+      "per_10hp": 7,
+      "repeat_ms": 0.0,
+      "period_ms": 1500.0
+    },
+    "limb_injury": {
+      "enabled": true,
+      "base_pct": 30,
+      "wave": "ramp_up",
+      "duration_ms": 1200,
+      "channel": "both",
+      "cooldown_ms": 1500,
+      "priority": 2,
+      "freq": null,
+      "per_10hp": 6.0,
+      "repeat_ms": 0.0,
+      "period_ms": 1500.0
+    },
+    "death": {
+      "enabled": true,
+      "base_pct": 45,
+      "wave": "death",
+      "duration_ms": 4000,
+      "channel": "both",
+      "cooldown_ms": 5000,
+      "priority": 5,
+      "freq": null,
+      "per_10hp": 6.0,
+      "repeat_ms": 1500,
+      "period_ms": 1500.0
+    },
+    "low_health": {
+      "enabled": false,
+      "base_pct": 12,
+      "wave": "heartbeat",
+      "duration_ms": 1200,
+      "channel": "both",
+      "cooldown_ms": 0,
+      "priority": 0,
+      "freq": null,
+      "per_10hp": 6.0,
+      "repeat_ms": 0.0,
+      "period_ms": 1500
+    }
+  },
+  "log_level": "INFO"
+}
