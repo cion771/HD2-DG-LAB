@@ -18,6 +18,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 from hd2coyote import __version__
 from hd2coyote.config import AppConfig
@@ -288,6 +289,116 @@ class TestWebServer(unittest.TestCase):
         _, data = http("GET", self.base + "/api/status")
         self.assertTrue(any("17" in line for line in data["events"]), data["events"])
 
+    # ------------------------------------------------- 0.5.0：事件源 / 波形 / 更新
+    def test_get_sources_endpoint(self) -> None:
+        status, data = http("GET", self.base + "/api/sources")
+        self.assertEqual(status, 200, data)
+        self.assertTrue(data["ok"])
+        self.assertIn("game_bridge", data["enabled"])
+        names = [row["name"] for row in data["catalog"]]
+        self.assertIn("game_bridge", names)
+        self.assertIn("http", names)
+        self.assertIn("/event", data["http"]["url"])
+        self.assertIn("damage", data["http"]["examples"])
+
+    def test_get_waves_endpoint(self) -> None:
+        status, data = http("GET", self.base + "/api/waves")
+        self.assertEqual(status, 200, data)
+        self.assertIn("pinch", data["presets"])
+        self.assertEqual(data["unit_chars"], 16)
+        self.assertEqual(data["unit_ms"], 100)          # 一个单元 = 100ms（4×25ms）
+        self.assertIn("pulse_data", data["text"])
+
+    def test_get_update_endpoint_before_any_check(self) -> None:
+        status, data = http("GET", self.base + "/api/update")
+        self.assertEqual(status, 200, data)
+        self.assertIsNone(data["ok"])
+        self.assertEqual(data["current"], __version__)
+
+    def test_post_event_injects_and_logs(self) -> None:
+        status, data = http("POST", self.base + "/api/event", {"ev": "damage", "severity": 25})
+        self.assertEqual(status, 200, data)
+        self.assertTrue(data["ok"])
+        self.assertIn("受伤", data["detail"])
+        _, snap = http("GET", self.base + "/api/status")
+        self.assertTrue(any("受伤" in line for line in snap["events"]), snap["events"])
+
+    def test_post_event_accepts_a_list(self) -> None:
+        status, data = http("POST", self.base + "/api/event",
+                            [{"ev": "damage", "severity": 25}, {"ev": "death"}])
+        self.assertEqual(status, 200, data)
+        self.assertEqual(sorted(data["events"]), ["damage", "death"])
+
+    def test_post_event_state_packet_is_not_an_error(self) -> None:
+        status, data = http("POST", self.base + "/api/event",
+                            {"ev": "state", "hp": 100, "hp_max": 100})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data["events"], [])
+
+    def test_post_event_rejects_nonsense(self) -> None:
+        status, data = http("POST", self.base + "/api/event", {"ev": "喝茶"})
+        self.assertEqual(status, 400)
+        self.assertIn("没听懂", data["error"])
+
+    def test_post_waves_saves_and_persists(self) -> None:
+        status, data = http("POST", self.base + "/api/waves",
+                            {"action": "set", "name": "死亡测试", "units": ["1414141464646464"]})
+        self.assertEqual(status, 200, data)
+        self.assertIn("死亡测试", [row["name"] for row in data["waves"]])
+        reloaded = AppConfig.load(self.config_path)
+        self.assertIn("死亡测试", reloaded.waves.entries)
+
+    def test_post_waves_rejects_bad_units(self) -> None:
+        status, data = http("POST", self.base + "/api/waves",
+                            {"action": "set", "name": "坏的", "units": ["不是十六进制"]})
+        self.assertEqual(status, 400)
+        self.assertIn("十六进制", data["error"])
+
+    def test_post_waves_remove_missing_is_400(self) -> None:
+        status, data = http("POST", self.base + "/api/waves",
+                            {"action": "remove", "name": "没这个"})
+        self.assertEqual(status, 400)
+
+    def test_post_waves_unknown_action_is_400(self) -> None:
+        status, data = http("POST", self.base + "/api/waves", {"action": "跳舞"})
+        self.assertEqual(status, 400)
+
+    def test_status_carries_sources_ramp_and_update(self) -> None:
+        _, data = http("GET", self.base + "/api/status")
+        self.assertIn("sources", data["controller"])
+        self.assertIn("ramp", data["controller"])
+        self.assertIn("pct", data["controller"]["ramp"])
+        self.assertIn("update", data)
+        self.assertIn("hook", data["controller"])
+        self.assertIn("device", data["controller"])
+        self.assertIn("bridge", data)
+
+    def test_post_config_rejects_empty_or_unknown_sources(self) -> None:
+        status, data = http("POST", self.base + "/api/config",
+                            {"sources": {"enabled": ["脑电波"]}})
+        self.assertEqual(status, 400)
+        self.assertIn("未知事件源", data["error"])
+        status, data = http("POST", self.base + "/api/config", {"sources": {"enabled": []}})
+        self.assertEqual(status, 400)
+
+    def test_post_config_applies_ramp_settings(self) -> None:
+        status, data = http("POST", self.base + "/api/config",
+                            {"ramp": {"enabled": True, "per_event": 3, "ceiling_pct": 18,
+                                      "apply_to": ["damage"]}})
+        self.assertEqual(status, 200, data)
+        self.assertTrue(self.app.cfg.ramp.enabled)
+        self.assertEqual(self.app.cfg.ramp.per_event, 3.0)
+        self.assertEqual(self.app.cfg.ramp.ceiling_pct, 18.0)
+        self.assertEqual(self.app.cfg.ramp.apply_to, ["damage"])
+        self.assertTrue(any("ramp.enabled" in line for line in data["applied"]), data["applied"])
+
+    def test_post_config_applies_update_settings(self) -> None:
+        status, data = http("POST", self.base + "/api/config",
+                            {"update": {"repo": "someone/else", "timeout_s": 99}})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(self.app.cfg.update.repo, "someone/else")
+        self.assertEqual(self.app.cfg.update.timeout_s, 30.0)      # 夹到 1..30
+
 
 class TestWebAppDirect(unittest.TestCase):
     """不经 HTTP 直接测 WebApp（更快，也覆盖 JSON 之外的返回结构）。"""
@@ -318,6 +429,132 @@ class TestWebAppDirect(unittest.TestCase):
             self.assertTrue(svg is None or svg.startswith(b"<?xml") or b"<svg" in svg)
         finally:
             app.engine.stop()
+
+
+class TestWaveLibraryApi(unittest.TestCase):
+    """波形库面板背后的那套动作（不走 HTTP，直接打方法）。"""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cfg = AppConfig()
+        self.cfg.device.kind = "mock"
+        self.path = Path(self.tmp.name) / "config.json"
+        self.app = WebApp(self.cfg, self.path, bridge_cfg_dir=Path(self.tmp.name) / "bridge")
+        self.app.engine.device.start()
+        self.app.engine.safety.arm()
+
+    def tearDown(self) -> None:
+        self.app.engine.stop()
+        self.tmp.cleanup()
+
+    def entry(self, name: str) -> dict:
+        return next(row for row in self.app.waves_dict()["waves"] if row["name"] == name)
+
+    def test_set_then_persist_then_export(self) -> None:
+        result = self.app.waves_api({"action": "set", "name": "死亡", "units": ["1414141464646464"],
+                                     "default_ms": 800, "note": "参考项目抄的"})
+        self.assertTrue(result["ok"])
+        row = self.entry("死亡")
+        self.assertEqual(row["unit_count"], 1)
+        self.assertEqual(row["kind"], "units")
+        self.assertEqual(row["default_ms"], 800.0)
+        reloaded = AppConfig.load(self.path)
+        self.assertEqual(reloaded.waves.entries["死亡"].units, ["1414141464646464"])
+        exported = self.app.waves_api({"action": "export"})
+        self.assertIn('"死亡"', exported["text"])
+        self.assertIn("pulse_data", exported["text"])
+
+    def test_preset_action_and_rules_view(self) -> None:
+        result = self.app.waves_api({"action": "preset", "name": "长按死亡", "preset": "death",
+                                     "freq": 45})
+        self.assertTrue(result["ok"])
+        self.assertEqual(self.entry("长按死亡")["preset"], "death")
+        self.assertIn("damage", result["rules"])
+
+    def test_import_pulse_data_from_reference_project(self) -> None:
+        text = json.dumps({"pulse_data": {"受伤": ["0A0A0A0A64646464"]},
+                           "punish_time": {"受伤": 2}})
+        result = self.app.waves_api({"action": "import", "text": text})
+        self.assertEqual(result["import"]["count"], 1)
+        self.assertEqual(self.entry("受伤")["default_ms"], 2000.0)
+
+    def test_import_replace_clears_old_entries(self) -> None:
+        self.app.waves_api({"action": "set", "name": "旧的", "units": ["1414141464646464"]})
+        self.app.waves_api({"action": "replace", "text": json.dumps({"pulse_data": {"新的": "1414141464646464"}})})
+        names = [row["name"] for row in self.app.waves_dict()["waves"]]
+        self.assertNotIn("旧的", names)
+        self.assertIn("新的", names)
+
+    def test_import_bad_json_is_value_error(self) -> None:
+        with self.assertRaises(ValueError):
+            self.app.waves_api({"action": "import", "text": "{不是 json"})
+
+    def test_remove_and_unknown_action(self) -> None:
+        self.app.waves_api({"action": "set", "name": "临时", "units": ["1414141464646464"]})
+        result = self.app.waves_api({"action": "remove", "name": "临时"})
+        self.assertTrue(result["ok"])
+        with self.assertRaises(ValueError):
+            self.app.waves_api({"action": "remove", "name": "临时"})
+        with self.assertRaises(ValueError):
+            self.app.waves_api({"action": "跳舞"})
+        with self.assertRaises(ValueError):
+            self.app.waves_api({"action": "set", "name": "", "units": ["1414141464646464"]})
+
+    def test_test_action_plays_the_library_wave(self) -> None:
+        self.app.waves_api({"action": "set", "name": "试打", "units": ["0A0A0A0A64646464"]})
+        self.app.waves_api({"action": "test", "name": "试打", "pct": 4, "ms": 300})
+        self.app.engine.tick()
+        self.assertGreater(self.app.engine.device.peak_strength, 0)
+        self.app.engine.trip("测试结束")
+
+    def test_test_action_rejects_bad_parameters(self) -> None:
+        for bad in ({"name": "试打", "channel": "C"}, {"name": "试打", "pct": 500},
+                    {"name": "试打", "ms": 5}, {}):
+            with self.assertRaises(ValueError):
+                self.app.waves_api({"action": "test", **bad})
+
+
+class TestUpdateApi(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        cfg = AppConfig()
+        cfg.device.kind = "mock"
+        self.app = WebApp(cfg, Path(self.tmp.name) / "config.json",
+                          bridge_cfg_dir=Path(self.tmp.name) / "bridge")
+
+    def tearDown(self) -> None:
+        self.app.engine.stop()
+        self.tmp.cleanup()
+
+    def test_info_before_check_does_not_touch_the_network(self) -> None:
+        info = self.app.update_info()
+        self.assertIsNone(info["ok"])
+        self.assertEqual(info["current"], __version__)
+        self.assertIn("还没检查过", info["error"])
+
+    def test_check_is_cached_until_cleared(self) -> None:
+        fake = {"ok": True, "current": __version__, "update_available": True,
+                "latest": {"tag": "v9.9.9", "url": "https://example.invalid/r"}, "zip": None}
+        with mock.patch("hd2coyote.webui.update_check.check", return_value=fake) as checker:
+            self.assertEqual(self.app.update_api({})["latest"]["tag"], "v9.9.9")
+            checker.assert_called_once()
+        # 再读就是缓存，不再打网络
+        self.assertEqual(self.app.update_info()["latest"]["tag"], "v9.9.9")
+        with mock.patch("hd2coyote.webui.update_check.check") as checker:
+            self.app.update_api({"clear": True})
+            checker.assert_not_called()
+        self.assertIsNone(self.app.update_info()["ok"])
+
+    def test_check_records_an_event(self) -> None:
+        fake = {"ok": True, "current": __version__, "update_available": False}
+        with mock.patch("hd2coyote.webui.update_check.check", return_value=fake):
+            self.app.update_api({})
+        self.assertTrue(any("已是最新" in line for line in self.app.events), self.app.events)
+
+    def test_disabled_update_is_refused(self) -> None:
+        self.app.cfg.update.enabled = False
+        with self.assertRaises(ValueError):
+            self.app.update_api({})
 
 
 if __name__ == "__main__":

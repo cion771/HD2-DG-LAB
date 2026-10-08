@@ -86,3 +86,26 @@ class DeviceState(Event):
     connected: bool = False
     detail: str = ""
     kind: str = field(default="device_state", init=False)
+
+
+# --------------------------------------------------------------------- 解析工具
+def positive_float(value: object, default: float) -> float:
+    """把来路不明的值转成有限浮点数（NaN / inf / 非数字都退回默认值）。"""
+    try:
+        out = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    if out != out or out in (float("inf"), float("-inf")):  # NaN / inf
+        return default
+    return out
+
+
+def truthy(value: object) -> bool:
+    """0/1、true/false、yes/no、on/off 都算数（外部工具爱用什么都有）。"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return False

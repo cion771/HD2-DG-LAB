@@ -49,6 +49,23 @@ class HookConfig:
 
 
 @dataclass
+class SourcesConfig:
+    """事件源（插件）开关。
+
+    事件源只负责把外部世界翻译成 Event，所有事件依旧要过规则层与安全层，
+    所以「多接一个源」不会绕过任何上限。名字即 hd2coyote/sources 里注册的源。
+    """
+
+    enabled: list[str] = field(default_factory=lambda: ["game_bridge"])
+    #: HTTP 事件源：任何外部程序 POST 一行 JSON 就能触发（详见 docs/SOURCES.md）
+    http_host: str = "127.0.0.1"
+    http_port: int = 47778
+    http_token: str = ""  # 非空时要求 X-HD2Coyote-Token 头（或 ?token=）
+    http_max_per_s: float = 20.0  # 限速：超过就丢弃并告警，避免外部脚本刷爆电极
+    http_timeout_s: float = 3.0  # 收到过 state 后超过这么久没数据 = 断流（0 = 不判）
+
+
+@dataclass
 class CaptureConfig:
     """抓屏配置（仅在 source = vision 时使用）。"""
 
@@ -107,6 +124,59 @@ class RuleConfig:
 
 
 @dataclass
+class WaveEntry:
+    """波形库里的一个命名波形。
+
+    两种写法二选一：
+      * units：直接给 16 进制单元（每个 8 字节 = 4 个 25ms，如 "0A0A0A0A64646464"），
+        不够长就循环 —— 这就是「波形」的本意，也方便和别的工具互通；
+      * preset + freq/peak：引用内置生成器（pinch/sting/buzz/ramp_up/breath/heartbeat/death）。
+    """
+
+    units: list[str] = field(default_factory=list)
+    preset: str = ""
+    freq: float | None = None
+    peak: float = 100.0
+    default_ms: float = 0.0  # 建议时长（从参考项目的 punish_time 导入）
+    note: str = ""
+
+
+@dataclass
+class WaveLibConfig:
+    """命名波形库：rules 里的 wave 可以引用这里的名字（**库优先于内置预设**）。"""
+
+    entries: dict[str, WaveEntry] = field(default_factory=dict)
+
+
+@dataclass
+class RampConfig:
+    """惩罚累积模型：伤害会攒起来，血越少越强，长时间没挨打慢慢回落。
+
+    参考 DG-Lab-Punishment 的「血量越少强度越高」，但保留我们的安全模型：
+    这里算出来的只是「意愿」，最终仍然被 safety.max_pct / max_absolute 硬夹。
+    """
+
+    enabled: bool = False
+    per_event: float = 2.0  # 每个伤害/损伤事件累加的百分点
+    hp_missing_pct: float = 20.0  # 血量掉光时按缺失比例额外抬升的百分点
+    ceiling_pct: float = 25.0  # 累积上限
+    decay_after_s: float = 4.0  # 超过这么久没有新事件就开始回落
+    decay_per_s: float = 1.5  # 回落速度（百分点/秒）
+    reset_on_death: bool = True  # 阵亡 / 被增援后清零
+    apply_to: list[str] = field(default_factory=lambda: ["damage", "limb_injury"])
+
+
+@dataclass
+class UpdateConfig:
+    """检查更新（只提示 + 给链接，**绝不自动下载安装**）。"""
+
+    enabled: bool = True
+    repo: str = "cion771/hd2-coyote"
+    check_on_start: bool = False
+    timeout_s: float = 6.0
+
+
+@dataclass
 class SafetyConfig:
     """安全限制。这些值在任何情况下都优先于规则强度。"""
 
@@ -131,10 +201,14 @@ class AppConfig:
     source: Literal["hook", "vision"] = "hook"
     device: DeviceConfig = field(default_factory=DeviceConfig)
     hook: HookConfig = field(default_factory=HookConfig)
+    sources: SourcesConfig = field(default_factory=SourcesConfig)
     capture: CaptureConfig = field(default_factory=CaptureConfig)
     hud: HudConfig = field(default_factory=HudConfig)
     detect: DetectConfig = field(default_factory=DetectConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
+    waves: WaveLibConfig = field(default_factory=WaveLibConfig)
+    ramp: RampConfig = field(default_factory=RampConfig)
+    update: UpdateConfig = field(default_factory=UpdateConfig)
     rules: dict[str, RuleConfig] = field(
         default_factory=lambda: {
             "damage": RuleConfig(
@@ -181,17 +255,21 @@ class AppConfig:
 NESTED_TYPES: dict[str, type] = {
     "device": DeviceConfig,
     "hook": HookConfig,
+    "sources": SourcesConfig,
     "capture": CaptureConfig,
     "hud": HudConfig,
     "detect": DetectConfig,
     "safety": SafetyConfig,
+    "waves": WaveLibConfig,
+    "ramp": RampConfig,
+    "update": UpdateConfig,
 }
 
 BOX_FIELDS = {"hp_bar", "injury_zone", "death_probe", "region"}
 
 
 def from_dict(cls: type, data: dict[str, Any]) -> Any:
-    """把 dict 还原为 dataclass（含嵌套 dataclass / Box / rules），忽略未知键。"""
+    """把 dict 还原为 dataclass（含嵌套 dataclass / Box / rules / 波形库），忽略未知键。"""
     if data is None:
         return None
     if cls is Box:
@@ -199,9 +277,27 @@ def from_dict(cls: type, data: dict[str, Any]) -> Any:
     if cls is RuleConfig:
         known = {f.name for f in fields(RuleConfig)}
         return RuleConfig(**{k: v for k, v in data.items() if k in known})
+    if cls is WaveEntry:
+        known = {f.name for f in fields(WaveEntry)}
+        out: dict[str, Any] = {}
+        for k, v in data.items():
+            if k not in known:
+                continue
+            if k == "units":
+                out[k] = [str(u) for u in v] if isinstance(v, (list, tuple)) else []
+            elif k == "freq" and v is not None:
+                out[k] = float(v)
+            else:
+                out[k] = v
+        return WaveEntry(**out)
+    if cls is WaveLibConfig:
+        entries = data.get("entries") or {}
+        return WaveLibConfig(entries={
+            str(k): from_dict(WaveEntry, v) for k, v in entries.items() if isinstance(v, dict)
+        })
     if not is_dataclass(cls):
         return data
-    out: dict[str, Any] = {}
+    out = {}
     for f in fields(cls):
         if f.name not in data:
             continue
@@ -212,6 +308,10 @@ def from_dict(cls: type, data: dict[str, Any]) -> Any:
             out[f.name] = {k: from_dict(RuleConfig, vv) for k, vv in (v or {}).items()}
         elif f.name in BOX_FIELDS:
             out[f.name] = None if v is None else from_dict(Box, v)
+        elif f.name == "enabled" and cls is SourcesConfig:
+            # 事件源列表：只收字符串，空列表回退到默认（别把控制器变成聋子）
+            items = [str(x) for x in v] if isinstance(v, (list, tuple)) else []
+            out[f.name] = items or ["game_bridge"]
         else:
             out[f.name] = v
     return cls(**out)

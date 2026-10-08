@@ -110,6 +110,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("  自检：python -m hd2coyote doctor")
     else:
         print("状态来源：屏幕识别（需要先在界面里标定 HUD）")
+    print(f"事件源  ：{'、'.join(cfg.sources.enabled)}")
+    if "http" in cfg.sources.enabled:
+        token = "（需要 X-HD2Coyote-Token）" if cfg.sources.http_token else ""
+        print(f"  HTTP 上报：POST http://{cfg.sources.http_host}:{cfg.sources.http_port}/event{token}")
+        print("  例子：见 docs/SOURCES.md，或 Web 控制台的「事件源」面板")
     print("检测中…… Ctrl+C 退出")
     try:
         while True:
@@ -161,6 +166,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print(f"依赖 {mod:<12}: 缺失（{exc}）")
     cfg = AppConfig.load(args.config)
     print(f"状态来源    : {cfg.source}（hook = 游戏内 Lua 桥；vision = 屏幕识别）")
+    from .sources import source_catalog
+
+    names = [item["name"] for item in source_catalog()]
+    print(f"事件源      : {'、'.join(cfg.sources.enabled) or '（未启用任何源）'}"
+          f"（可用：{'、'.join(names)}）")
+    if "http" in cfg.sources.enabled:
+        print(f"HTTP 事件源 : http://{cfg.sources.http_host}:{cfg.sources.http_port}/event"
+              f"{'（需要令牌）' if cfg.sources.http_token else '（无令牌）'}")
     print(f"设备        : {cfg.device.kind} {cfg.device.host}:{cfg.device.port}")
     _, _, lan_ip = _device_api()
     print(f"本机局域网IP: {lan_ip()}")
@@ -203,6 +216,19 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"安全上限    : max_pct={cfg.safety.max_pct}% max_absolute={cfg.safety.max_absolute}")
     print("说明        : 本程序只读屏幕像素，不注入游戏、不读写游戏内存")
     return 0
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    """查一眼 GitHub Releases 有没有新版本 —— 只提示 + 给链接，不自动下载安装。"""
+    from . import update_check
+
+    cfg = load_config(args.config)
+    repo = str(args.repo or cfg.update.repo)
+    result = update_check.check(repo=repo, current=__version__, timeout=float(args.timeout))
+    print(update_check.format_result(result))
+    if not cfg.update.enabled:
+        print("（配置里 update.enabled = false：网页上不会主动提示，这次是你手动查的）")
+    return 0 if result.get("ok") else 1
 
 
 def cmd_test_pulse(args: argparse.Namespace) -> int:
@@ -302,6 +328,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("name", nargs="?", default="")
     p.add_argument("--ms", type=float, default=1000.0)
     p.set_defaults(func=cmd_waves)
+
+    p = sub.add_parser("update", parents=[common], help="检查有没有新版本（只提示，不自动安装）")
+    p.add_argument("--check", action="store_true", help="查一次（默认行为，加上只为读起来清楚）")
+    p.add_argument("--repo", default="", help="覆盖 GitHub 仓库（owner/name）")
+    p.add_argument("--timeout", type=float, default=6.0, help="网络超时秒数")
+    p.set_defaults(func=cmd_update)
     return ap
 
 

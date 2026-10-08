@@ -54,6 +54,20 @@ cd "E:\md\n mod\hd2-coyote"
 
 配置里 `source` 切换来源：`"hook"`（默认）或 `"vision"`（屏幕识别，备用方案，需要标定 HUD）。
 
+### 事件源可以换（0.5.0）
+
+「游戏内桥」只是**默认**的事件源。`config.json` 的 `sources.enabled` 里能同时启用多个源，
+事件合流后走**同一套**规则层与安全层 —— 换源不会绕过任何上限：
+
+| 源 | 用途 |
+|---|---|
+| `game_bridge` | 游戏内 Lua 桥的 UDP 状态流（默认，断流会静音） |
+| `http` | 任何程序 / 别的游戏 / 直播工具 `POST` 一个 JSON 就能触发；带令牌与限速 |
+
+网页控制台的「事件源」面板能勾选、看在线状态、还能手动注入一个事件来试规则。
+协议、上报示例、以及"自己写一个源"（继承 `Source` + `@register_source`）见
+[docs/SOURCES.md](docs/SOURCES.md)。
+
 ### 关于「官方支持 mod」这件事
 
 **《绝地潜兵 2》没有官方 mod API、没有 SDK、也没有 Steam Workshop 支持。**
@@ -151,8 +165,37 @@ python -m venv .venv
 内置预设（`waves.py`）：`pinch`（按捏）、`sting`（刺痛）、`buzz`（低频连续）、
 `ramp_up`（渐强推力）、`breath`（呼吸）、`heartbeat`（心跳）、`death`（三段递增）。
 
-想自定义：`python -m hd2coyote waves death` 看编码结果，或直接改 `waves.py` 里的
-`PRESETS`。规则里的 `wave` 字段填预设名，`freq` 可覆盖默认频率。
+### 波形库（0.5.0）
+
+除了内置预设，还能在 `config.json` 的 `waves.entries` 里存**命名波形**，然后让规则的
+`wave` 字段直接写这个名字（库里没有才退回内置预设）：
+
+```json
+"waves": { "entries": {
+  "死亡长按": { "units": ["1414141464646464"], "default_ms": 2000, "note": "参考项目死亡波形" }
+}}
+```
+
+* 一个字串 = 一个单元 = **100ms**（4×25ms 子脉冲），不够长就循环；
+* 也可以只写 `"preset": "death"` + `freq`/`peak`，等于给内置预设起个别名；
+* 网页控制台的**波形库**面板能编辑、试打、删除，并与参考项目
+  [DG-Lab-Punishment](https://github.com/YingXIAmour/DG-Lab-Punishment) 那种
+  `{"pulse_data": {"死亡": [...]}, "punish_time": {...}}` JSON **互导**（`pulse_data` 里的
+  秒数会换算成 `default_ms`）。
+
+### 惩罚累积（0.5.0）
+
+`config.json` 的 `ramp` 段打开后，在规则基础强度之上再叠一层"越来越疼"的加成：
+
+```json
+"ramp": { "enabled": true, "per_event": 2.0, "hp_missing_pct": 20.0, "ceiling_pct": 25.0,
+          "decay_after_s": 4.0, "decay_per_s": 1.5, "reset_on_death": true,
+          "apply_to": ["damage", "limb_injury"] }
+```
+
+每次命中 `per_event`、血量缺失按 `hp_missing_pct` 换算、总加成封顶 `ceiling_pct`，
+超过 `decay_after_s` 没新事件就按 `decay_per_s` 回落，`reset_on_death` 决定阵亡/复活是否清零。
+**它只是加在规则百分比上的一层**，最终照样被 `max_pct` / `max_absolute` 夹住。
 
 ---
 
@@ -166,6 +209,7 @@ python -m hd2coyote simulate            # 合成画面自测整条链路（视�
 python -m hd2coyote test-pulse --pct 5 --ms 700
 python -m hd2coyote doctor              # 环境自检：抓屏/端口/加载器/已发现 addon
 python -m hd2coyote waves
+python -m hd2coyote update --check      # 查 GitHub 有没有新版本（只提示 + 给链接，不自动安装）
 
 # 游戏内桥
 python tools\build_addon.py             # 打包成管理器可导入的 ZIP
@@ -184,20 +228,25 @@ python tools\fake_app.py --url ws://127.0.0.1:9999/<clientId>   # 假装手机 A
 ```
 hd2coyote/
   config.py       配置模型（config.json）
-  hook.py         游戏内桥的 UDP 数据源（默认）
+  hook.py         游戏内桥的 UDP 数据源（默认）—— game_bridge 源的内核
+  sources/        事件源插件：base.py 注册表 + game_bridge.py + http.py
   capture.py      抓屏（dxcam > mss > Pillow）—— vision 路线用
   hud.py          血条自动定位、区域工具 —— vision 路线用
   detectors.py    健康/损伤/阵亡状态机（两条数据源共用）
   events.py       事件定义
   rules.py        事件 → 动作（强度、波形、冷却、通道）
   waves.py        郊狼波形生成与预设
+  wave_lib.py     命名波形库（自定义单元 / 预设别名 / 与 pulse_data JSON 互导）
+  ramp.py         惩罚累积（受伤越多、血量越少 → 加成越高，会回落）
+  update_check.py 查 GitHub Releases（只提示 + 给链接，绝不自动安装）
   safety.py       硬上限、急停热键、会话预算
-  engine.py       调度中枢（hook / vision 两种循环）
+  engine.py       调度中枢（事件源 / vision 两种循环）
   device/
     base.py           设备接口
     dglab_socket.py   DG-LAB Socket 协议（WebSocket 服务端 + 二维码）
     mock.py           干跑设备
   simulate.py     合成 HUD 画面 / 演示脚本
+  webui.py        Web 控制台（单页 + JSON API，零外部依赖）
   ui.py           Tkinter 界面 + 标定向导
   __main__.py     命令行入口
 lua/hd2_coyote_bridge.lua   游戏内只读 Lua 桥（Bingus Shared Loader addon）
@@ -206,7 +255,9 @@ tools/build_addon.py        打包成管理器可导入的 ZIP
 tools/fake_addon.py         假装游戏内桥在发 UDP
 tools/fake_app.py           假装 DG-LAB 手机 App
 docs/HOOK.md                Hook 路线：原理、已验证项、recon 步骤、排查表
-tests/                      91 个单测（含 LuaJIT 侧 addon 仿真与跨语言联调）
+docs/WEBUI.md               Web 控制台：面板、接口、关闭与安全
+docs/SOURCES.md             事件源：内置源、HTTP 协议、自己写一个源
+tests/                      283 个单测（含 LuaJIT 侧 addon 仿真与跨语言联调）
 ```
 
 ---
@@ -217,14 +268,17 @@ tests/                      91 个单测（含 LuaJIT 侧 addon 仿真与跨语�
 .\.venv\Scripts\python.exe -m unittest discover -t . -s tests -v
 ```
 
-覆盖四层：
+覆盖五层：
 
 1. **Python 逻辑**：报文格式、波形合法性、强度夹取、急停、会话预算、配置往返、界面冒烟。
 2. **Hook 数据源**：UDP 状态流 → 事件 → 引擎输出；超时断流静音；坏包不影响正常包。
-3. **Lua 桥（用真 LuaJIT + 假 FFI/假内存）**：LuaJIT 语法闸门、指针不被 32 位截断、
+3. **事件源与扩展（0.5.0）**：源注册表与目录、HTTP 源的令牌/限速/队列上限、状态机断流、
+   多源一起跑 + 关键源掉线静音、波形库优先于内置预设、惩罚累积的叠加/封顶/回落、
+   更新检查在 404/403/网络失败下也**只返回错误、不抛异常**。
+4. **Lua 桥（用真 LuaJIT + 假 FFI/假内存）**：LuaJIT 语法闸门、指针不被 32 位截断、
    本地玩家定位、状态读取、recon 落盘、live 帧钩子、缺偏移拒绝启动、
    **跨语言联调**（LuaJIT 发 UDP → Python 收 → 产出 Damage）。
-4. **打包**：`.patch_N` 往返与布局不变量、manifest 校验（纯 ASCII / 非法字符）、ZIP 结构。
+5. **打包**：`.patch_N` 往返与布局不变量、manifest 校验（纯 ASCII / 非法字符）、ZIP 结构。
 
 > 有一个特别值得说的回归：**LuaJIT 的 `tonumber(hex,16)` 只按 32 位解析**，
 > `0x141000000` 会被截成 `0x41000000` —— 指针一律改成逐字符解析，
@@ -242,6 +296,13 @@ tests/                      91 个单测（含 LuaJIT 侧 addon 仿真与跨语�
 但保留了同样的分层：如果你要接进那套框架，只需要把 `engine.inject(event)`
 （`hd2coyote/engine.py`）当成事件出口即可 —— 事件定义在 `events.py`，
 一一对应「受伤 / 肢体损伤 / 阵亡」。
+
+后来参考 [YingXIAmour/DG-Lab-Punishment](https://github.com/YingXIAmour/DG-Lab-Punishment)
+（Apache-2.0，郊狼惩罚姬）补了四件事：**事件源插件化**（它的 `plugins/` + `module_manager`）、
+**命名波形库与网页波形编辑器**（它的 `pulse_data` + `pulse_wave_gui`，格式可互导）、
+**惩罚累积**（它的"血越少越强"惩罚模型）、**检查更新**。
+唯一明确没学的是它的 `update.py`：那种「杀主程序 + 解压覆盖安装目录」的自动更新一旦中断
+就会把安装目录搞坏，本项目只做**提示 + 给链接**。
 
 ---
 

@@ -15,6 +15,7 @@
 | 来源 | 许可 | 参考了什么 |
 |---|---|---|
 | [etxp / HD2-G60-Smart-Targeting](https://github.com/etxp/HD2-G60-Smart-Targeting) | MIT | "如何在游戏内定位本地玩家实体"（ping actor 表 + 环形缓冲）这一思路，以及对应的偏移锚点。`lua/hd2_coyote_bridge.lua` 的 `PROFILES` 里已署名。 |
+| [YingXIAmour / DG-Lab-Punishment](https://github.com/YingXIAmour/DG-Lab-Punishment) | Apache-2.0 | 0.5.0 的四个特性参考了它的思路：事件源插件化（`plugins/` + `module_manager.py`）、命名波形库与波形编辑器（`pulse_data` + `pulse_wave_gui.py` 的频率换算）、"血越少越强"的惩罚模型、检查更新。**没有复制其代码**；波形库与它的 `pulse_data` JSON 格式保持互导。它的 `update.py`（杀进程 + 覆盖安装）是明确的反面教材，本项目只做"提示 + 给链接"。 |
 | DG-LAB SOCKET 协议（官方 App 的局域网控制协议） | 官方文档/协议本身 | `hd2coyote/device/dglab_socket.py` 按该协议实现控制器侧服务端。 |
 
 ## 未随仓库分发的内容

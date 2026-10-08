@@ -5,10 +5,11 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 
-from . import waves
+from . import wave_lib, waves
 from .config import AppConfig, RuleConfig
 from .events import Death, Damage, Event, LimbInjury, LowHealth, Revive
 
@@ -37,8 +38,9 @@ class Action:
 class RuleEngine:
     """把事件翻译成 Action，并负责冷却与通道选择。"""
 
-    def __init__(self, cfg: AppConfig) -> None:
+    def __init__(self, cfg: AppConfig, logger: logging.Logger | None = None) -> None:
         self.cfg = cfg
+        self.log = logger or logging.getLogger("hd2coyote.rules")
         self._last: dict[str, float] = {}
         self._alternate = 0
 
@@ -85,7 +87,7 @@ class RuleEngine:
     def _make(self, name: str, rule: RuleConfig, pct: float, duration_ms: float,
               channel: str | None = None) -> Action:
         duration_ms = max(100.0, min(duration_ms, self.cfg.safety.max_event_ms))
-        units = waves.build(rule.wave, duration_ms, peak=100.0, freq=rule.freq)
+        units = self._units(name, rule, duration_ms)
         return Action(
             name=name,
             pct=max(0.0, pct),
@@ -99,11 +101,24 @@ class RuleEngine:
             period_ms=rule.period_ms,
         )
 
+    def _units(self, name: str, rule: RuleConfig, duration_ms: float) -> list[str]:
+        """波形来源：命名波形库优先（用户可在网页里编辑），其次内置预设。"""
+        units = wave_lib.resolve(self.cfg, rule.wave, duration_ms, peak=100.0, freq=rule.freq)
+        if units:
+            return units
+        try:
+            return waves.build(rule.wave, duration_ms, peak=100.0, freq=rule.freq)
+        except KeyError:
+            self.log.warning("规则 %s 的波形 %r 不存在（波形库里没有、内置预设也没有），退回 pinch",
+                             name, rule.wave)
+            return waves.build("pinch", duration_ms, peak=100.0, freq=rule.freq)
+
     def _damage(self, ev: Damage, now: float) -> list[Action]:
         rule = self.rule("damage")
         if not rule.enabled or ev.severity < self.cfg.detect.damage_min_pct:
             return []
         if not self._cooldown_ok("damage", rule.cooldown_ms, now):
+            self.log.debug("受伤规则冷却中（%.0fms），跳过", rule.cooldown_ms)
             return []
         pct = rule.base_pct + rule.per_10hp * (ev.severity / 10.0)
         return [self._make("damage", rule, pct, rule.duration_ms)]
@@ -113,6 +128,7 @@ class RuleEngine:
         if not rule.enabled:
             return []
         if not self._cooldown_ok(f"limb_injury:{ev.slot}", rule.cooldown_ms, now):
+            self.log.debug("肢体损伤规则冷却中（%.0fms），跳过", rule.cooldown_ms)
             return []
         pct = rule.base_pct * (1.2 if ev.bleeding else 1.0)
         return [self._make("limb_injury", rule, pct, rule.duration_ms)]

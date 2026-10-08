@@ -5,6 +5,36 @@
 
 ---
 
+## 0.5.0
+
+**参考 [DG-Lab-Punishment](https://github.com/YingXIAmour/DG-Lab-Punishment) 的四个改进：事件源插件化、波形库 + 网页波形编辑器、惩罚累积、检查更新。**
+（只借思路与数据格式，没有复制它的代码；它那个"杀主进程 + 覆盖安装"的自动更新是明确的反面教材，本项目只做提示 + 给链接。）
+
+- **A 事件源插件化**：新增 `hd2coyote/sources/`（注册表 + 基类 + 两个内置源）。
+  游戏内桥变成 `game_bridge` 源，另加 **`http` 源** —— 任何程序 `POST` 一个 JSON
+  （事件包或状态包）就能触发，带令牌（`hmac.compare_digest`）、限速（1 秒滑窗 → 429）
+  和断流静音；`config.json` 的 `sources.enabled` 可多源并用，事件合流后走**同一套**规则层与
+  安全层（换源不绕过任何上限）。网页新增「事件源」面板：勾选、看在线的源、**手动注入**试规则。
+  协议与"自己写一个源"见 [docs/SOURCES.md](docs/SOURCES.md)。
+- **B 波形库 + 网页波形编辑器**：`waves.entries` 存命名波形（自定义 16 进制单元，或给内置预设起别名），
+  规则的 `wave` 字段优先取库里的；网页「波形库」面板能编辑、试打、删除，并与
+  `{"pulse_data": {...}, "punish_time": {...}}` 这种 JSON **无损互导**（含往返不丢预设条目）。
+  一个单元 = 16 个十六进制字符 = 100ms（4×25ms）。
+- **C 惩罚累积**：`ramp` 段 —— 每次命中加 `per_event`、血量缺失按 `hp_missing_pct` 换算、
+  封顶 `ceiling_pct`、`decay_after_s` 之后按 `decay_per_s` 回落、`reset_on_death` 决定阵亡/复活是否清零。
+  只加在规则百分比上，最终照样被 `max_pct` / `max_absolute` 夹住。网页「惩罚累积」面板可调。
+- **D 检查更新**：`python -m hd2coyote update --check` 与网页「检查更新」（查询走 GitHub Releases API，
+  **只提示 + 给下载链接，绝不自动下载覆盖安装**）。查不到网/404/403 一律返回错误信息，**不抛异常**、
+  不影响输出。
+- **重构**：`Source.critical_now()`（运行时的"断流算不算状态不可信"）与类属性 `critical`（清单里的静态标注）
+  分开 —— 原来 HTTP 源用 property 表示动态关键性，导致清单里被当成恒真的关键源、引擎也判错。
+  `parse_event()` / `looks_known()` 抽成模块级函数，网页手动注入与 HTTP 上报共用同一份映射。
+- 测试：168 → **283**（源注册表/HTTP 源协议与限速/多源引擎与 dead-man 静音/波形库与导入导出/
+  惩罚累积/更新检查/webui 新端点）。
+- 新增文档 [docs/SOURCES.md](docs/SOURCES.md)；README、[docs/WEBUI.md](docs/WEBUI.md)、THIRD_PARTY.md 同步更新。
+
+---
+
 ## 0.4.3
 
 **修「关闭程序」再点一次的报错**（用户实测截图：关成功后再点会弹 `关闭失败: Failed to fetch`）。
