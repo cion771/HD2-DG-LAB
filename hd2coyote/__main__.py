@@ -67,6 +67,17 @@ def load_config(path: str, overrides: dict | None = None) -> AppConfig:
 
 
 # --------------------------------------------------------------------- 子命令
+def cmd_desktop(args: argparse.Namespace) -> int:
+    from .desktop import main as desktop_main
+
+    argv = []
+    for option in ("config", "bridge_dir", "data_dir"):
+        value = getattr(args, option, None)
+        if value:
+            argv.extend(["--" + option.replace("_", "-"), value])
+    return desktop_main(argv)
+
+
 def cmd_web(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     from .webui import run_web
@@ -286,7 +297,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("ui", parents=[common], help="桌面界面（Tkinter）")
     p.set_defaults(func=cmd_ui)
 
-    p = sub.add_parser("web", parents=[common], help="Web 控制台（浏览器，推荐）")
+    p = sub.add_parser("desktop", help="Fluent 桌面窗口（Windows / WebView2）")
+    p.add_argument("--config", default=None, help="显式指定配置；默认使用桌面独立配置")
+    p.add_argument("--bridge-dir", default=None)
+    p.add_argument("--data-dir", default=None)
+    p.set_defaults(func=cmd_desktop)
+
+    p = sub.add_parser("web", parents=[common], help="Web 控制台（浏览器）")
     p.add_argument("--host", default="127.0.0.1", help="监听地址（默认只监听本机）")
     p.add_argument("--port", type=int, default=8787)
     p.add_argument("--bridge-dir", default="", help="桥的配置目录（默认 %%LOCALAPPDATA%%\\hd2coyote）")
@@ -342,7 +359,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if not getattr(args, "cmd", None):
         args = ap.parse_args(["ui"])
-    setup_logging()
+    if args.cmd != "desktop":
+        setup_logging()
     return int(args.func(args))
 
 

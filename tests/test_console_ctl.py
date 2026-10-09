@@ -44,7 +44,7 @@ class TestStopConsole(unittest.TestCase):
 
     def tearDown(self) -> None:
         try:
-            self.app.engine.stop()
+            self.app.close("测试结束")
         except Exception:
             pass
         try:
@@ -59,7 +59,7 @@ class TestStopConsole(unittest.TestCase):
         self.assertTrue(port_is_open("127.0.0.1", self.port))
         ok, detail = post_shutdown("127.0.0.1", self.port)
         self.assertTrue(ok, detail)
-        self.assertIn("输出已归零", detail)
+        self.assertIn("请求停止输出", detail)
         self.assertTrue(wait_port_closed("127.0.0.1", self.port, timeout=6.0),
                         "端口应当被释放")
         self.assertFalse(self.app.engine.status.running)

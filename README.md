@@ -2,10 +2,10 @@
 
 **《绝地潜兵 2》× 郊狼 DG-LAB：把受伤、肢体损伤与阵亡事件转换为设备反馈。**
 
-面向 Windows 的 Python 控制器，带本地 Web 控制台：查看游戏状态、调整规则与强度、管理波形，并通过 DG-LAB 手机 App 连接郊狼 Coyote 3.0。
+面向 Windows 的控制器，带可双击运行的 **Fluent 桌面 EXE**，同时保留本地 Web 控制台：查看游戏状态、调整规则与强度、管理波形，并通过 DG-LAB 手机 App 连接郊狼 Coyote 3.0。
 仓库名为 **hd2-DG-LAB**，Python 模块与游戏内桥仍使用 `hd2coyote` / `HD2-Coyote-Bridge`，命令中无需改名。
 
-[快速开始](#快速开始) · [连接游戏与设备](#连接游戏与设备) · [常见问题](#常见问题) · [隐私与发布检查](#隐私与发布检查) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/cion771/hd2-DG-LAB/issues)
+[桌面版使用与打包](docs/DESKTOP.md) · [快速开始](#快速开始) · [连接游戏与设备](#连接游戏与设备) · [常见问题](#常见问题) · [隐私与发布检查](#隐私与发布检查) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/cion771/hd2-DG-LAB/issues)
 
 > [!WARNING]
 > 本项目控制人体接触式电刺激设备。使用前请完整阅读 [安全须知](SAFETY.md) 和设备说明书，**先用 mock 自测，再考虑连接真机**。
@@ -17,7 +17,7 @@
 | 功能 | 说明 |
 | --- | --- |
 | 游戏事件反馈 | 受伤、肢体损伤、阵亡；低血量反馈默认关闭 |
-| Web 控制台 | 实时状态、规则开关、强度调节、测试脉冲、桥配置与诊断 |
+| Fluent 桌面 / Web | 浅色与深色界面，状态卡片、规则调节、测试脉冲、桥配置与诊断 |
 | 两种状态来源 | 默认游戏内 Lua 桥；也可切换为需要标定 HUD 的屏幕识别 |
 | 可扩展事件源 | 游戏桥 UDP 与 HTTP 事件源可合流，统一经过规则与安全层 |
 | 波形库 | 内置预设、命名波形、网页编辑，以及 `pulse_data` JSON 导入/导出 |
@@ -45,7 +45,8 @@ Web 控制台负责操作控制器，**不是**手机扫码连接的 WebSocket �
 
 ## 使用前准备
 
-- **Windows + Python 3.10 或更高版本**，安装 Python 时勾选加入 PATH。
+- **桌面 EXE**：Windows 10/11 x64 + Microsoft Edge WebView2 Runtime；不需要 Python。构建与启动见 [桌面文档](docs/DESKTOP.md)。
+- **源码 / Web**：Windows + Python 3.10 或更高版本，安装 Python 时勾选加入 PATH。
 - 安装依赖时需要联网；使用 Git 克隆则还需要 Git，也可下载仓库 ZIP。
 - 真机反馈需要 **郊狼 Coyote 3.0、DG-LAB 手机 App**，以及手机与电脑互通的可信局域网。
 - Hook 路线需要《绝地潜兵 2》、[Bingus Shared Loader](https://github.com/CowboyBingus/Helldivers2ModLoader) 及兼容的 mod 管理器。
@@ -55,7 +56,9 @@ Web 控制台负责操作控制器，**不是**手机扫码连接的 WebSocket �
 
 ## 快速开始
 
-以下命令在 **PowerShell** 中运行。已有源码可直接进入项目根目录，从第 2 步开始。
+已有本地构建 EXE 可直接双击运行，先在「设备连接」选择 Mock。桌面版默认使用独立配置、保持解除武装，不会自动开始检测。详见 [桌面文档](docs/DESKTOP.md)。
+
+以下是源码 / Web 路线，命令在 **PowerShell** 中运行。已有源码可从第 2 步开始。
 
 ### 1. 获取源码
 
@@ -94,10 +97,10 @@ python -m venv .venv
 ```
 
 浏览器会打开 **<http://127.0.0.1:8787/>**。若没有自动打开，手动访问即可。
-也可双击 [run.bat](run.bat)：它会优先复用已有虚拟环境；没有环境时才新建并安装依赖，然后启动 Web 控制台。
+双击 [run.bat](run.bat) 则启动 **桌面版**（优先本地 EXE，否则安装桌面依赖并从源码启动）。Web 与桌面使用不同默认配置目录，不要同时运行它们连接设备。
 
 首次先查看页面，不要急着启动设备、开始检测或发送测试脉冲。
-需要在控制台继续无硬件联调时，先关闭程序，将本地配置中的 `device.kind` 改为 `"mock"`，再启动。
+需要继续无硬件联调时，在「设备连接」将设备类型选择为 **Mock** 并保存；保存会停止当前连接与检测。
 真机使用前再改回 `"socket"`，并先检查安全上限。
 
 ## 连接游戏与设备
@@ -137,8 +140,8 @@ python -m venv .venv
 
 1. 在 DG-LAB App 中通过蓝牙连接设备，按设备说明确认使用条件与禁忌。电脑和手机连接同一可信局域网。
 2. 将控制器设备类型设为 `socket` 并重启；先把控制器上限与 App 通道上限降至低档，确认急停方式可用。
-3. 在 Web 控制台点击 **「启动设备（二维码）」**，用 App 扫码，等待连接状态确认。
-4. 完成无硬件验证后，才考虑短时、低强度测试脉冲；从最低可感知水平谨慎调整。**5% 不是对所有人的安全保证。**
+3. 在「设备连接」点击 **「启动设备服务」**，用 App 扫码，等待连接状态确认。
+4. 完成无硬件验证后，先开始检测、确认重新武装，才考虑短时、低强度测试脉冲；从最低可感知水平谨慎调整。**5% 不是对所有人的安全保证。**
 5. 点击「开始检测」，核对游戏事件与反馈。异常时立即急停，必要时直接关闭设备。
 
 ### 网络与端口
@@ -156,8 +159,9 @@ python -m venv .venv
 ### 急停与退出
 
 - **急停**：网页「急停」或默认热键 **F12**，静音并解除武装；确认问题排除后再点「重新武装」。App 的 **1 号反馈按钮**也可切换急停/恢复，避免误触恢复。
-- **正常退出**：优先用网页「关闭程序」，程序会尝试归零、清空波形并断开设备。**只关浏览器标签页不会停止后台控制器。**
-- **命令退出**：双击 [stop.bat](stop.bat)，或执行以下命令：
+- **桌面退出**：窗口 × / Alt+F4 或页面「关闭程序」会尝试停止本实例与设备；在 App 核对输出已停止。
+- **Web 正常退出**：优先用网页「关闭程序」，程序会尝试归零、清空波形并断开设备。**只关浏览器标签页不会停止后台控制器。**
+- **Web 命令退出**（不针对随机端口的桌面实例）：双击 [stop.bat](stop.bat)，或执行以下命令：
 
 ```powershell
 ./.venv/Scripts/python.exe -m hd2coyote stop --no-force
@@ -206,7 +210,8 @@ python -m venv .venv
 以下命令均在项目根目录执行，不会因为仓库改名而改变模块名。
 
 ```powershell
-./.venv/Scripts/python.exe -m hd2coyote web                  # Web 控制台（推荐）
+./.venv/Scripts/python.exe -m hd2coyote desktop              # Fluent 桌面（需桌面依赖）
+./.venv/Scripts/python.exe -m hd2coyote web                  # Web 控制台
 ./.venv/Scripts/python.exe -m hd2coyote ui                   # Tkinter 桌面界面
 ./.venv/Scripts/python.exe -m hd2coyote doctor               # 环境与桥诊断
 ./.venv/Scripts/python.exe -m hd2coyote run --mock           # mock 接收事件，不连硬件
@@ -250,6 +255,7 @@ Hook 无游戏联调：在一个终端运行 `run --mock`，另一个终端运�
 | 入口 | 内容 |
 | --- | --- |
 | [Hook 文档](docs/HOOK.md) | 桥原理、模式阶梯、偏移验证、诊断与回退 |
+| [Fluent 桌面](docs/DESKTOP.md) | EXE、源码启动、独立数据目录与打包 |
 | [Web 控制台](docs/WEBUI.md) | 面板、API、配置与关闭行为 |
 | [事件源](docs/SOURCES.md) | HTTP 协议、状态包与自定义源 |
 | [核心代码](hd2coyote/) | 检测、规则、波形、安全层与设备协议 |

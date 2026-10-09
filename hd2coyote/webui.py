@@ -31,6 +31,8 @@ import threading
 import time
 import webbrowser
 from dataclasses import asdict
+from functools import wraps
+from urllib.parse import urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -216,6 +218,9 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -226,16 +231,40 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _read_body(self) -> Any:
         length = int(self.headers.get("Content-Length") or 0)
-        if length <= 0:
+        if length < 0 or length > 1024 * 1024:
+            raise ValueError("请求体不能超过 1 MiB")
+        if length == 0:
             return {}
         raw = self.rfile.read(length)
         try:
             return json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("请求体必须是有效 JSON") from exc
+
+    def _trusted_request(self, write: bool = False) -> bool:
+        # 限制 loopback 服务的 Host，阻止 DNS rebinding；CLI 无 Origin 可正常调用。
+        host = self.headers.get("Host", "")
+        try:
+            parsed = urlsplit("http://" + host)
+            bound_host, bound_port = self.server.server_address[:2]
+            if parsed.port != bound_port:
+                return False
+            if is_loopback(bound_host) and parsed.hostname not in (bound_host, "localhost", "127.0.0.1", "::1"):
+                return False
+            origin = self.headers.get("Origin")
+            if origin and origin != "http://" + host:
+                return False
+        except ValueError:
+            return False
+        if self.headers.get("Sec-Fetch-Site") == "cross-site":
+            return False
+        return not write or self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() == "application/json"
 
     # ------------------------------------------------------------ 路由
     def do_GET(self) -> None:  # noqa: N802
+        if not self._trusted_request():
+            self._json({"error": "只允许受信任的本机 / 同源请求"}, 403)
+            return
         route = self.path.split("?", 1)[0]
         if route in ("/", "/index.html"):
             self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
@@ -263,8 +292,11 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         route = self.path.split("?", 1)[0]
-        body = self._read_body()
+        if not self._trusted_request(write=True):
+            self._json({"error": "需要同源 application/json 请求"}, 403)
+            return
         try:
+            body = self._read_body()
             if not isinstance(body, dict) and route != "/api/event":
                 # /api/event 允许一次注入一串（数组），其它端点只要对象
                 self._json({"error": "请求体必须是 JSON 对象"}, 400)
@@ -295,6 +327,17 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
 
 
+def mutating(method):
+    """窗口关闭与 HTTP 写操作共用锁，关闭开始后不允许重新启动硬件。"""
+    @wraps(method)
+    def guarded(self, *args, **kwargs):
+        with self.lifecycle_lock:
+            if self.closing:
+                raise ValueError("控制器正在关闭，拒绝新的操作")
+            return method(self, *args, **kwargs)
+    return guarded
+
+
 class WebApp:
     """把 Engine / 配置 / 桥诊断包成 JSON API。"""
 
@@ -304,6 +347,9 @@ class WebApp:
         self.config_path = Path(config_path)
         self.bridge_cfg_dir = bridge_cfg_dir
         self.engine = Engine(cfg)
+        self.engine.trip("启动后请手动重新武装")
+        self.lifecycle_lock = threading.RLock()
+        self.closing = False
         self.events: list[str] = []
         self.engine.on_event = self._on_event
         self._lock = threading.Lock()
@@ -381,6 +427,7 @@ class WebApp:
     def config_dict(self) -> dict[str, Any]:
         return self.cfg.to_dict()
 
+    @mutating
     def update_config(self, patch: dict[str, Any]) -> dict[str, Any]:
         """局部合并控制器配置：rules / safety / device / hook / source。"""
         applied: list[str] = []
@@ -494,16 +541,16 @@ class WebApp:
         self._manual_source = None    # 配置变了，手动注入的解析实例重建
         # 立即生效（规则/安全是引用，设备与数据源要重建）
         if "device" in patch or "source" in patch or "sources" in patch:
-            was_running = self.engine.status.running
+            self.engine.trip("配置变更：停止检测并重新连接")
             self.engine.stop()
             self.engine = Engine(self.cfg)
+            self.engine.trip("配置已变更，请手动重新武装")
             self.engine.on_event = self._on_event
-            if was_running:
-                self.engine.start()
         else:
             self.engine.set_config(self.cfg)
         return {"ok": True, "applied": applied, "config": self.cfg.to_dict()}
 
+    @mutating
     def update_bridge(self, payload: dict[str, Any]) -> dict[str, Any]:
         values = {
             "mode": payload.get("mode", "safe"),
@@ -516,6 +563,7 @@ class WebApp:
         return {"ok": True, "path": str(path), "content": path.read_text(encoding="utf-8"),
                 "note": "桥的配置在游戏启动时读取 —— 请重启游戏生效"}
 
+    @mutating
     def action(self, payload: dict[str, Any]) -> dict[str, Any]:
         name = str(payload.get("action", "")).strip()
         engine = self.engine
@@ -524,6 +572,7 @@ class WebApp:
             self._note("控制台：开始检测")
             return {"ok": True, "detail": "已开始检测"}
         if name == "stop":
+            engine.trip("已停止检测，请手动重新武装")
             engine.stop()
             self._note("控制台：停止检测")
             return {"ok": True, "detail": "已停止"}
@@ -540,6 +589,8 @@ class WebApp:
             ms = float(payload.get("ms", 700.0))
             if not 0 < pct <= 100 or not 100 <= ms <= 5000:
                 raise ValueError("test_pulse 参数越界（pct 0-100，ms 100-5000）")
+            if not engine.status.running or not engine.safety.armed:
+                raise ValueError("测试前需要开始检测并重新武装")
             engine.test_pulse(pct=pct, ms=ms)
             self._note(f"控制台：测试脉冲 {pct}% / {ms:.0f}ms")
             return {"ok": True, "detail": f"已发送测试脉冲 {pct}% / {ms:.0f}ms"}
@@ -548,23 +599,41 @@ class WebApp:
             self._note("控制台：启动设备")
             return {"ok": True, "detail": "设备已启动（可用二维码连接手机 App）"}
         if name == "shutdown":
-            # ★ 顺序很重要：先把输出归零并停掉设备（戴着电极的人不能等），
-            #   再让 HTTP 服务器退出。engine.stop() 内部会 device.stop()，
-            #   socket 设备会先 mute()（清波形 + 强度置 0）再关连接。
-            try:
-                engine.stop()
-            except Exception as exc:
-                LOGGER.warning("停止引擎时出错：%s", exc)
-            self._note("控制台：关闭程序（输出已归零，设备已断开）")
-            self.shutdown_reason = str(payload.get("reason", "Web 控制台"))
-            # 延迟一点再退出，保证这个响应能发回浏览器
-            threading.Thread(target=self._delayed_shutdown, daemon=True).start()
-            return {"ok": True, "detail": "正在关闭：输出已归零、设备已断开，页面可以关了"}
+            return self.close(str(payload.get("reason", "Web 控制台")), delay=0.6)
         raise ValueError(f"未知动作：{name}")
 
-    def _delayed_shutdown(self, delay: float = 0.6) -> None:
-        time.sleep(delay)
-        self.shutdown_event.set()
+    def close(self, reason: str = "桌面窗口", delay: float = 0.0) -> dict[str, Any]:
+        """幂等关闭。先禁止后续写入、急停与停止，再通知服务器退出。
+
+        软件只能请求归零，不能把网络传输成功当成硬件已归零的证明。
+        """
+        with self.lifecycle_lock:
+            if self.closing:
+                return {"ok": True, "detail": "控制器正在关闭，请在手机 App 核对输出已停止"}
+            self.closing = True
+            self.shutdown_reason = reason
+            errors = []
+            try:
+                self.engine.trip("关闭程序")
+            except Exception as exc:
+                errors.append(str(exc))
+                LOGGER.exception("关闭时急停失败")
+            try:
+                self.engine.stop()
+            except Exception as exc:
+                errors.append(str(exc))
+                LOGGER.exception("关闭时停止引擎失败")
+            detail = "正在关闭：已请求停止输出并断开设备，请在手机 App 核对"
+            if errors:
+                detail = "关闭时发生错误，输出状态未知，请立即在手机 App 停止输出"
+            self._note("控制台：关闭程序；" + detail)
+            if delay > 0:
+                timer = threading.Timer(delay, self.shutdown_event.set)
+                timer.daemon = True
+                timer.start()
+            else:
+                self.shutdown_event.set()
+            return {"ok": not errors, "detail": detail, **({"error": detail} if errors else {})}
 
     def qr_svg(self) -> bytes | None:
         url = getattr(self.engine.device, "qr_payload", "")
@@ -599,6 +668,7 @@ class WebApp:
             },
         }
 
+    @mutating
     def event_api(self, payload: Any) -> dict[str, Any]:
         """手动注入事件/状态（调试、联调用）—— 照样过规则层与安全上限。"""
         items = payload if isinstance(payload, list) else [payload]
@@ -646,6 +716,7 @@ class WebApp:
             "rules": {name: rule.wave for name, rule in self.cfg.rules.items()},
         }
 
+    @mutating
     def waves_api(self, payload: dict[str, Any]) -> dict[str, Any]:
         """波形库增删改 / 导入导出 / 试打（改完立即生效）。"""
         action = str(payload.get("action") or "set").strip().lower()
@@ -705,6 +776,8 @@ class WebApp:
                 raise ValueError("channel 只能是 A / B / both")
             if not 0 < pct <= 100 or not 100 <= ms <= 5000:
                 raise ValueError("试打参数越界（pct 0-100，ms 100-5000）")
+            if not self.engine.status.running or not self.engine.safety.armed:
+                raise ValueError("测试前需要开始检测并重新武装")
             self.engine.test_pulse(pct=pct, ms=ms, channel=channel, wave=name)
             self._note(f"波形库：试打「{name}」{pct:.0f}% / {ms:.0f}ms")
             return {"ok": True, "applied": f"已试打「{name}」", **self.waves_dict()}
@@ -792,659 +865,18 @@ def run_web(cfg: AppConfig, config_path: Path, host: str = "127.0.0.1", port: in
     except KeyboardInterrupt:
         print("\n收到 Ctrl+C，正在停止……")
     finally:
-        app.engine.stop()        # 内部会 device.stop()：清波形 + 强度归零 + 断开
+        app.close("Web 服务退出")
         httpd.server_close()
-        print("控制器已关闭（输出已归零，设备已断开）。")
+        print("控制器已关闭；已请求停止输出，请在手机 App 核对。")
 
 
 # --------------------------------------------------------------------- 页面
-PAGE = r"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>hd2-coyote 控制台</title>
-<style>
-:root{--bg:#14161a;--card:#1d2026;--line:#2c313a;--fg:#e6e8ec;--dim:#8b93a1;
-      --ok:#3fb950;--warn:#d29922;--bad:#f85149;--accent:#388bfd}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 "Segoe UI",system-ui,sans-serif}
-header{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;
-       align-items:center;gap:14px;flex-wrap:wrap}
-h1{font-size:16px;margin:0;font-weight:600}
-.tag{font-size:12px;color:var(--dim)}
-main{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px;padding:14px}
-section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
-section h2{font-size:13px;margin:0 0 10px;color:var(--dim);font-weight:600;letter-spacing:.4px}
-.row{display:flex;justify-content:space-between;gap:10px;padding:3px 0}
-.row span:last-child{font-variant-numeric:tabular-nums}
-.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
-.ok{background:var(--ok)}.bad{background:var(--bad)}.warn{background:var(--warn)}
-.bar{height:10px;background:#2a2f38;border-radius:5px;overflow:hidden;margin:6px 0 10px}
-.bar>i{display:block;height:100%;background:linear-gradient(90deg,#3fb950,#d29922,#f85149);
-       width:0;transition:width .2s}
-button{background:#262b33;color:var(--fg);border:1px solid var(--line);border-radius:7px;
-       padding:7px 11px;cursor:pointer;font-size:13px}
-button:hover{border-color:var(--accent)}
-button.danger{border-color:#6b2b2b;background:#2a1b1b}
-button.primary{border-color:#245a9c;background:#16273d}
-.btns{display:flex;gap:8px;flex-wrap:wrap}
-label.slider{display:grid;grid-template-columns:1fr 74px;gap:8px;align-items:center;margin:6px 0}
-input[type=range]{width:100%}
-input[type=number],input[type=text],input[type=checkbox],select,textarea{background:#141821;color:var(--fg);
-       border:1px solid var(--line);border-radius:6px;padding:5px 7px;width:100%}
-input[type=checkbox]{width:auto}
-textarea{font-family:ui-monospace,Consolas,monospace;font-size:12px;resize:vertical}
-pre{background:#11141a;border:1px solid var(--line);border-radius:8px;padding:9px;
-    overflow:auto;max-height:220px;font-size:12px;white-space:pre-wrap;margin:6px 0 0}
-.muted{color:var(--dim);font-size:12px}
-.pill{display:inline-block;padding:1px 7px;border-radius:99px;border:1px solid var(--line);
-      font-size:12px;color:var(--dim)}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-</style>
-</head>
-<body>
-<header>
-  <h1>hd2-coyote 控制台</h1>
-  <span class="tag" id="ver"></span>
-  <span class="pill" id="dev"></span>
-  <span class="pill" id="hk"></span>
-  <span class="btns" style="margin-left:auto">
-    <button class="primary" onclick="act('start')">开始检测</button>
-    <button onclick="act('stop')">停止</button>
-    <button class="danger" onclick="act('trip')">急停</button>
-    <button onclick="act('arm')">重新武装</button>
-    <button class="danger" id="shutdownBtn" onclick="shutdownApp()"
-            title="输出归零并退出控制器">关闭程序</button>
-  </span>
-</header>
-<main>
-  <section>
-    <h2>实时状态</h2>
-    <div class="bar"><i id="hpbar"></i></div>
-    <div class="row"><span>血量</span><span id="hp">--</span></div>
-    <div class="row"><span>肢体损伤</span><span id="limbs">--</span></div>
-    <div class="row"><span>输出强度</span><span id="out">--</span></div>
-    <div class="row"><span>状态</span><span id="state">--</span></div>
-    <div class="row"><span>累计输出</span><span id="sess">--</span></div>
-    <div class="row"><span>数据源 / 桥</span><span id="src">--</span></div>
-    <div id="qrwrap" style="margin-top:8px"></div>
-    <h2 style="margin-top:14px">测试脉冲</h2>
-    <div class="grid2">
-      <label class="slider"><span>强度 %</span><input type="number" id="tpct" value="5" min="1" max="100"></label>
-      <label class="slider"><span>时长 ms</span><input type="number" id="tms" value="700" min="100" max="5000"></label>
-    </div>
-    <div class="btns" style="margin-top:8px">
-      <button onclick="testPulse()">发送测试脉冲</button>
-      <button onclick="act('device_start')">启动设备（二维码）</button>
-    </div>
-  </section>
+# 源码与 PyInstaller 包都从模块旁的 frontend 目录加载；不依赖工作目录或 CDN。
+def load_page() -> str:
+    root = Path(__file__).with_name("frontend")
+    return (root.joinpath("index.html").read_text(encoding="utf-8")
+            .replace("/*__STYLE__*/", root.joinpath("fluent.css").read_text(encoding="utf-8"))
+            .replace("/*__SCRIPT__*/", root.joinpath("app.js").read_text(encoding="utf-8")))
 
-  <section>
-    <h2>强度（立即生效）</h2>
-    <div id="rules"></div>
-    <label class="slider"><span>总倍率</span><input type="number" id="master" step="0.05" min="0" max="2"></label>
-    <label class="slider"><span>单次上限 %</span><input type="number" id="maxpct" min="1" max="60"></label>
-    <label class="slider"><span>绝对上限</span><input type="number" id="maxabs" min="1" max="200"></label>
-    <div class="btns" style="margin-top:8px"><button class="primary" onclick="saveConfig()">保存强度设置</button></div>
-    <div class="muted" id="cfginfo" style="margin-top:6px"></div>
-  </section>
 
-  <section>
-    <h2>游戏内桥（改完要重启游戏）</h2>
-    <label class="slider"><span>档位 mode</span>
-      <select id="bmode">
-        <option value="safe">safe（只写日志）</option>
-        <option value="net">net（+UDP）</option>
-        <option value="menu">menu（+游戏内菜单）</option>
-        <option value="recon">recon（+内存侦察）</option>
-        <option value="live">live（正式运行）</option>
-      </select></label>
-    <div class="grid2">
-      <label class="slider"><span>UDP 端口</span><input type="number" id="bport" min="1024" max="65535"></label>
-      <label class="slider"><span>上报间隔 s</span><input type="number" id="bint" step="0.05" min="0.05" max="1"></label>
-      <label class="slider"><span>血量偏移</span><input type="number" id="bhp" min="-1" max="65535"></label>
-      <label class="slider"><span>上限偏移</span><input type="number" id="bhpma" min="-1" max="65535"></label>
-      <label class="slider"><span>肢体掩码偏移</span><input type="number" id="blimb" min="-1" max="65535"></label>
-      <label class="slider"><span>肢体起始位</span><input type="number" id="bshift" min="0" max="7"></label>
-      <label class="slider"><span>阵亡偏移</span><input type="number" id="bdead" min="-1" max="65535"></label>
-      <label class="slider"><span>profile</span><input type="text" id="bprof"></label>
-    </div>
-    <div class="btns" style="margin-top:8px">
-      <button class="primary" onclick="saveBridge()">写入 bridge_config.lua</button>
-      <button onclick="loadBridge()">重新读取</button>
-    </div>
-    <div class="muted" id="binfo" style="margin-top:6px"></div>
-  </section>
-
-  <section>
-    <h2>诊断</h2>
-    <div id="dwarn" class="muted"></div>
-    <div class="row"><span>桥上次运行</span><span id="dlast" style="text-align:right"></span></div>
-    <div class="row"><span>addon STATUS</span><span id="dstatus" style="text-align:right"></span></div>
-    <div class="row"><span>加载器日志行</span><span id="dloader" style="text-align:right"></span></div>
-    <div class="muted" id="dpaths"></div>
-    <pre id="dlog">（暂无日志）</pre>
-    <h2 style="margin-top:12px">recon 报告</h2>
-    <pre id="drecon">（还没跑过 recon —— 把档位设成 recon 后重启游戏）</pre>
-  </section>
-
-  <section>
-    <h2>事件</h2>
-    <pre id="events">（暂无）</pre>
-  </section>
-
-  <section>
-    <h2>事件源（改完立即重建引擎）</h2>
-    <div id="srcList" class="muted">加载中…</div>
-    <div class="btns" style="margin-top:8px">
-      <button class="primary" onclick="saveSources()">保存事件源</button>
-      <button onclick="loadSources()">重新读取</button>
-    </div>
-    <div class="muted" id="srcInfo" style="margin-top:6px"></div>
-    <h2 style="margin-top:12px">手动注入（调试）</h2>
-    <div class="grid2">
-      <label class="slider"><span>事件</span>
-        <select id="evKind">
-          <option value="damage">受伤 damage</option>
-          <option value="limb_injury">肢体损伤 limb_injury</option>
-          <option value="death">阵亡 death</option>
-          <option value="revive">复活 revive</option>
-          <option value="low_health">低血量 low_health</option>
-          <option value="state">状态包 state</option>
-        </select></label>
-      <label class="slider"><span>数值（severity / 血量%）</span>
-        <input type="number" id="evVal" value="20" step="1"></label>
-    </div>
-    <div class="btns" style="margin-top:8px">
-      <button class="primary" onclick="injectEvent()">注入这一个</button>
-    </div>
-    <div class="muted" id="evInfo" style="margin-top:6px"></div>
-    <pre id="srcUsage">（上报示例）</pre>
-  </section>
-
-  <section>
-    <h2>波形库（规则里按名字选用）</h2>
-    <div id="waveList" class="muted">加载中…</div>
-    <div class="btns" style="margin-top:8px">
-      <button onclick="loadWaves()">重新读取</button>
-      <button onclick="exportWaves()">导出到下面</button>
-      <button onclick="importWaves()">从下面导入</button>
-    </div>
-    <h2 style="margin-top:12px">新建 / 覆盖</h2>
-    <div class="grid2">
-      <label class="slider"><span>名字</span><input type="text" id="wName" placeholder="例如 死亡长按"></label>
-      <label class="slider"><span>内置预设</span><select id="wPreset"></select></label>
-      <label class="slider"><span>频率 Hz（留空=预设）</span>
-        <input type="number" id="wFreq" min="10" max="240" step="1" placeholder="10-240"></label>
-      <label class="slider"><span>峰值 %</span><input type="number" id="wPeak" min="1" max="100" value="100"></label>
-    </div>
-    <label class="slider"><span>单元（16 位十六进制，逗号/空格分隔）</span>
-      <textarea id="wUnits" rows="2" placeholder="0A0A0A0A64646464"></textarea></label>
-    <div class="btns" style="margin-top:8px">
-      <button class="primary" onclick="saveWave()">保存到波形库</button>
-      <button onclick="testWave()">按左边测试脉冲的强度/时长试打</button>
-      <button class="danger" onclick="removeWave()">删除这个波形</button>
-    </div>
-    <div class="muted" id="wInfo" style="margin-top:6px"></div>
-    <textarea id="wJson" rows="7" placeholder="导出/导入的 JSON（DG-Lab-Punishment 的 default.json 也能直接粘进来）"></textarea>
-  </section>
-
-  <section>
-    <h2>惩罚累积（受伤越多、强度越高）</h2>
-    <label class="slider"><span>启用累积</span><input type="checkbox" id="rpOn"></label>
-    <div class="grid2">
-      <label class="slider"><span>每个事件 +%</span><input type="number" id="rpPerEvent" step="0.5" min="0"></label>
-      <label class="slider"><span>缺血量权重 %</span><input type="number" id="rpHp" step="1" min="0"></label>
-      <label class="slider"><span>累积封顶 %</span><input type="number" id="rpCeil" step="1" min="0"></label>
-      <label class="slider"><span>几秒后开始回落</span><input type="number" id="rpDecayAfter" step="0.5" min="0"></label>
-      <label class="slider"><span>回落速度 %/s</span><input type="number" id="rpDecayPer" step="0.5" min="0"></label>
-      <label class="slider"><span>阵亡/复活清零</span><input type="checkbox" id="rpResetOnDeath"></label>
-    </div>
-    <div class="btns" style="margin-top:8px">
-      <button class="primary" onclick="saveRamp()">保存累积设置</button>
-    </div>
-    <div class="muted" id="rpInfo" style="margin-top:6px"></div>
-  </section>
-
-  <section>
-    <h2>检查更新</h2>
-    <div class="row"><span>仓库</span><span id="upRepo" style="text-align:right"></span></div>
-    <div class="row"><span>当前版本</span><span id="upCur" style="text-align:right"></span></div>
-    <div class="row"><span>最新版本</span><span id="upLatest" style="text-align:right"></span></div>
-    <div class="btns" style="margin-top:8px">
-      <button class="primary" onclick="checkUpdate()">检查更新</button>
-      <a id="upLink" href="#" target="_blank" rel="noreferrer" style="display:none">打开发布页</a>
-    </div>
-    <div class="muted" id="upInfo" style="margin-top:6px">只提示 + 给链接，绝不自动下载安装。</div>
-  </section>
-</main>
-<script>
-const RULES = {damage:'受伤', limb_injury:'肢体损伤', death:'阵亡', low_health:'低血量'};
-let CFG = null;
-let FAILS = 0;
-let LASTVER = '';
-
-async function api(path, opts) {
-  const r = await fetch(path, opts);
-  const t = await r.text();
-  let j = null; try { j = JSON.parse(t); } catch (e) { j = {error: t}; }
-  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-  return j;
-}
-function fmtPct(v){ return (v===null||v===undefined) ? '--' : (v*100).toFixed(1)+'%'; }
-
-async function refresh() {
-  let s; try { s = await api('/api/status'); FAILS = 0; }
-  catch (e) {
-    // 服务器没了（比如刚点了「关闭程序」）—— 别让页面看起来还在监控
-    if (++FAILS === 5) {
-      markClosed('ℹ️ 连不上控制器 —— 它已经退出了。要再用一次，重新运行 run.bat 或 '
-                 + 'python -m hd2coyote web。');
-    }
-    return;
-  }
-  const c = s.controller, b = s.bridge || {};
-  LASTVER = c.version;
-  document.getElementById('ver').textContent = 'v' + c.version + ' · 运行 ' + c.uptime_s + 's';
-  document.getElementById('dev').textContent = '设备 ' + (c.device.connected ? '已连接' : '未连接')
-        + (c.device.kind ? ' ('+c.device.kind+')' : '');
-  document.getElementById('hk').textContent = c.source === 'hook'
-        ? ('桥 ' + (c.hook.alive ? '在线' : '离线') + (c.hook.version ? ' v'+c.hook.version : ''))
-        : ('来源 ' + c.source);
-  document.getElementById('hp').textContent = fmtPct(c.hp);
-  document.getElementById('hpbar').style.width = ((c.hp||0)*100).toFixed(1) + '%';
-  document.getElementById('limbs').textContent = (c.limbs && c.limbs.length) ? c.limbs.join('') : '--';
-  document.getElementById('out').textContent = 'A=' + c.output.a + ' B=' + c.output.b
-        + ' (' + c.output.pct + '%)'
-        + (c.ramp && c.ramp.enabled ? ' 累积+' + c.ramp.pct + '%' : '');
-  document.getElementById('state').innerHTML = (c.armed
-        ? '<span class="dot ok"></span>已武装' : '<span class="dot bad"></span>已静音 ' + (c.mute_reason||''))
-        + ' · ' + (c.detecting ? '检测中' : '未检测');
-  document.getElementById('sess').textContent = c.session_seconds + ' s';
-  document.getElementById('src').textContent = c.source + ' · ' + (c.hook.detail || '')
-        + ((c.sources && c.sources.length)
-            ? ' ｜ ' + c.sources.map(x => x.name + (x.alive ? '✓' : '✗')).join(' ')
-            : '');
-  if (c.device.qr_url) {
-    document.getElementById('qrwrap').innerHTML =
-      '<div class="muted">手机 App 扫码（或手输）：<br>' + c.device.qr_url + '</div>'
-      + '<img src="/qr.svg" style="width:150px;height:150px;background:#fff;border-radius:8px;margin-top:6px">';
-  }
-  document.getElementById('events').textContent = (s.events && s.events.length)
-        ? s.events.slice().reverse().join('\n') : '（暂无）';
-  document.getElementById('dstatus').textContent = b.status || '（没有 STATUS 文件 —— addon 还没跑过）';
-  document.getElementById('dloader').textContent = b.loader_line || '（加载器日志里没有 hd2coyote）';
-  // 桥上次实际跑的档位 vs 现在配置里的档位：不一致 = 忘了重启游戏
-  const mLast = /version=([\w.]+)\s+mode=(\w+)/.exec(b.status || '');
-  const wantMode = (b.parsed && b.parsed.mode) || '';
-  document.getElementById('dlast').textContent = mLast
-        ? ('v' + mLast[1] + ' mode=' + mLast[2]) : '（还没运行过）';
-  let warn = '';
-  if (!b.exists) {
-    warn = '⚠️ 没有 bridge_config.lua：addon 会跑内置默认（safe，什么都不做）。'
-         + '在右边选好档位后点"写入"。';
-  } else if (mLast && wantMode && mLast[2] !== wantMode) {
-    warn = '⚠️ 配置里是 ' + wantMode + '，但游戏上次实际跑的是 ' + mLast[2]
-         + ' —— 需要重启游戏才会生效。';
-  } else if (!b.loader_line) {
-    warn = '⚠️ 加载器日志里没有 hd2coyote：确认 Arsenal 里已启用并 Deploy，且这局游戏启动过。';
-  }
-  document.getElementById('dwarn').textContent = warn;
-  document.getElementById('dpaths').textContent = (b.config_path||'') + '  ·  ' + (b.loader_log||'');
-  const tail = (b.log_tail||[]).concat(b.shared_log_tail||[]);
-  document.getElementById('dlog').textContent = tail.length ? tail.join('\n') : '（暂无日志）';
-  document.getElementById('drecon').textContent = (b.recon_report||[]).length
-        ? b.recon_report.join('\n')
-        : '（还没跑过 recon —— 把档位设成 recon 后重启游戏，报告会自动出现在这里）';
-  renderUpdate(s.update || {});
-}
-
-// ---------------------------------------------------------------- 检查更新
-function renderUpdate(u) {
-  document.getElementById('upRepo').textContent = u.repo || '-';
-  document.getElementById('upCur').textContent = u.current || LASTVER || '-';
-  const latest = u.latest || {};
-  document.getElementById('upLatest').textContent = latest.tag
-        ? (latest.tag + (latest.published_at ? '（' + String(latest.published_at).slice(0,10) + '）' : ''))
-        : '-';
-  const link = document.getElementById('upLink');
-  const url = u.url || latest.url || '';
-  if (url) { link.href = url; link.style.display = ''; } else { link.style.display = 'none'; }
-  let text = '只提示 + 给链接，绝不自动下载安装。';
-  if (u.ok === false) text = '⚠️ 检查失败：' + (u.error || '未知错误');
-  else if (u.ok === true && u.update_available) {
-    text = '🎉 有新版本 ' + (u.latest && u.latest.tag) + '（当前 ' + u.current + '）';
-    if (u.zip && u.zip.name) text += ' · 附件 ' + u.zip.name;
-  } else if (u.ok === true) text = '✓ 已是最新版本（' + u.current + '）';
-  document.getElementById('upInfo').textContent = text;
-}
-
-async function checkUpdate() {
-  const box = document.getElementById('upInfo');
-  box.textContent = '正在查 GitHub Releases…';
-  try {
-    const res = await api('/api/update', {method:'POST', headers:{'Content-Type':'application/json'},
-                                          body: JSON.stringify({})});
-    renderUpdate(res);
-  } catch (e) { box.textContent = '检查失败：' + e.message; }
-}
-
-// ---------------------------------------------------------------- 事件源
-async function loadSources() {
-  const s = await api('/api/sources');
-  window.__SRC = s;
-  document.getElementById('srcList').innerHTML = s.catalog.map(item =>
-      `<div class="row"><span><input type="checkbox" id="src_${item.name}"
-        ${s.enabled.includes(item.name) ? 'checked' : ''}> <b>${item.label}</b>
-        <span class="muted">${item.name}${item.critical ? ' · 关键源' : ''}</span></span>
-        <span class="muted" style="text-align:right">${item.hint || ''}</span></div>`).join('');
-  const rt = (s.runtime || []).map(x => x.label + '：' + (x.detail || (x.alive ? '在线' : '离线')));
-  document.getElementById('srcInfo').textContent =
-      '引擎数据来源：' + s.engine_source + ' ｜ HTTP 上报 ' + s.http.url
-      + (s.http.token_required ? '（需要令牌）' : '（无令牌）')
-      + ' ｜ 限速 ' + s.http.max_per_s + '/s'
-      + (rt.length ? ' ｜ 此刻：' + rt.join('；') : '');
-  document.getElementById('srcUsage').textContent = Object.keys(s.http.examples)
-      .map(k => k + '  ' + JSON.stringify(s.http.examples[k])).join('\n');
-}
-
-async function saveSources() {
-  const s = window.__SRC || await api('/api/sources');
-  const enabled = s.catalog.filter(i => {
-    const box = document.getElementById('src_' + i.name);
-    return box && box.checked;
-  }).map(i => i.name);
-  try {
-    const res = await api('/api/config', {method:'POST', headers:{'Content-Type':'application/json'},
-                                          body: JSON.stringify({sources:{enabled}})});
-    document.getElementById('srcInfo').textContent =
-        '✓ 已保存：' + res.applied.join(', ') + '（数据源会重建）';
-  } catch (e) {
-    document.getElementById('srcInfo').textContent = '保存失败：' + e.message;
-  }
-  await loadSources();
-}
-
-async function injectEvent() {
-  const kind = document.getElementById('evKind').value;
-  const val = Number(document.getElementById('evVal').value);
-  let body;
-  if (kind === 'state') body = {ev:'state', hp:val, hp_max:100, limbs:[0,0,0]};
-  else if (kind === 'damage') body = {ev:'damage', severity:val};
-  else if (kind === 'limb_injury') body = {ev:'limb_injury', slot:1, name:'左肢'};
-  else if (kind === 'low_health') body = {ev:'low_health', ratio:val/100};
-  else body = {ev:kind};
-  try {
-    const res = await api('/api/event', {method:'POST', headers:{'Content-Type':'application/json'},
-                                         body: JSON.stringify(body)});
-    document.getElementById('evInfo').textContent = '✓ ' + res.detail;
-  } catch (e) {
-    document.getElementById('evInfo').textContent = '注入失败：' + e.message;
-  }
-  refresh();
-}
-
-// ---------------------------------------------------------------- 波形库
-async function loadWaves() {
-  const w = await api('/api/waves');
-  window.__WAVES = w;
-  document.getElementById('wPreset').innerHTML = w.presets
-      .map(p => `<option value="${p}">${p}</option>`).join('');
-  document.getElementById('waveList').innerHTML = w.waves.length
-    ? w.waves.map(row =>
-        `<div class="row"><span><a href="#" onclick="pickWave('${row.name}');return false">${row.name}</a>
-          <span class="muted">${row.kind === 'units' ? row.unit_count + ' 个单元' : '预设 ' + row.preset}</span></span>
-          <span class="muted" style="text-align:right">${row.note || ''}</span></div>`).join('')
-    : '<div class="muted">（波形库是空的 —— 规则会退回内置预设 pinch / sting / …）</div>';
-  document.getElementById('wInfo').textContent = '规则现在选用的波形：'
-      + Object.keys(w.rules).map(k => k + '=' + (w.rules[k] || '-')).join('、')
-      + `（一个单元 ${w.unit_chars} 个十六进制字符 = ${w.unit_ms}ms，其中每 ${w.unit_ms/4}ms 一组频率/强度，频率 ${w.freq_min}-${w.freq_max}）`;
-  document.getElementById('wJson').value = w.text;
-}
-
-function pickWave(name) {
-  const w = window.__WAVES; if (!w) return;
-  const row = w.waves.find(x => x.name === name); if (!row) return;
-  document.getElementById('wName').value = row.name;
-  document.getElementById('wUnits').value = (row.units || []).join(' ');
-  document.getElementById('wPeak').value = row.peak;
-  if (row.freq) document.getElementById('wFreq').value = row.freq;
-  if (row.kind === 'preset' && row.preset) document.getElementById('wPreset').value = row.preset;
-  document.getElementById('wInfo').textContent = '已把「' + name + '」填进上面的表单，改完点保存。';
-}
-
-async function saveWave() {
-  const name = document.getElementById('wName').value.trim();
-  const units = document.getElementById('wUnits').value.split(/[\s,;]+/).filter(x => x);
-  const body = {action:'set', name,
-      peak: Number(document.getElementById('wPeak').value),
-      freq: document.getElementById('wFreq').value || null};
-  if (units.length) body.units = units;
-  else body.preset = document.getElementById('wPreset').value;
-  try {
-    const res = await api('/api/waves', {method:'POST', headers:{'Content-Type':'application/json'},
-                                         body: JSON.stringify(body)});
-    document.getElementById('wInfo').textContent = '✓ ' + res.applied;
-  } catch (e) {
-    document.getElementById('wInfo').textContent = '保存失败：' + e.message;
-  }
-  await loadWaves();
-}
-
-async function removeWave() {
-  const name = document.getElementById('wName').value.trim();
-  if (!name) { document.getElementById('wInfo').textContent = '先在「名字」里填要删的波形'; return; }
-  if (!confirm('把波形「' + name + '」从库里删掉？规则里还在用它的会退回内置预设。')) return;
-  try {
-    const res = await api('/api/waves', {method:'POST', headers:{'Content-Type':'application/json'},
-                                         body: JSON.stringify({action:'remove', name})});
-    document.getElementById('wInfo').textContent = '✓ ' + res.applied;
-  } catch (e) {
-    document.getElementById('wInfo').textContent = '删除失败：' + e.message;
-  }
-  await loadWaves();
-}
-
-async function testWave() {
-  const name = document.getElementById('wName').value.trim();
-  const pct = Number(document.getElementById('tpct').value);
-  const ms = Number(document.getElementById('tms').value);
-  try {
-    const res = await api('/api/waves', {method:'POST', headers:{'Content-Type':'application/json'},
-                                         body: JSON.stringify({action:'test', name, pct, ms})});
-    document.getElementById('wInfo').textContent = '✓ ' + res.applied + '（' + pct + '% / ' + ms + 'ms）';
-  } catch (e) {
-    document.getElementById('wInfo').textContent = '试打失败：' + e.message;
-  }
-}
-
-async function exportWaves() {
-  try {
-    const res = await api('/api/waves', {method:'POST', headers:{'Content-Type':'application/json'},
-                                         body: JSON.stringify({action:'export'})});
-    document.getElementById('wJson').value = res.text;
-    document.getElementById('wInfo').textContent = '✓ 已导出到下面的框里（可复制保存）';
-  } catch (e) { document.getElementById('wInfo').textContent = '导出失败：' + e.message; }
-}
-
-async function importWaves() {
-  const text = document.getElementById('wJson').value.trim();
-  if (!text) { document.getElementById('wInfo').textContent = '先把 JSON 粘到下面的框里'; return; }
-  try {
-    const res = await api('/api/waves', {method:'POST', headers:{'Content-Type':'application/json'},
-                                         body: JSON.stringify({action:'import', text})});
-    document.getElementById('wInfo').textContent = '✓ ' + res.applied;
-  } catch (e) {
-    document.getElementById('wInfo').textContent = '导入失败：' + e.message;
-  }
-  await loadWaves();
-}
-
-// ---------------------------------------------------------------- 惩罚累积
-async function loadRamp() {
-  const c = await api('/api/config');
-  const r = c.ramp || {};
-  document.getElementById('rpOn').checked = !!r.enabled;
-  document.getElementById('rpPerEvent').value = r.per_event;
-  document.getElementById('rpHp').value = r.hp_missing_pct;
-  document.getElementById('rpCeil').value = r.ceiling_pct;
-  document.getElementById('rpDecayAfter').value = r.decay_after_s;
-  document.getElementById('rpDecayPer').value = r.decay_per_s;
-  document.getElementById('rpResetOnDeath').checked = !!r.reset_on_death;
-  document.getElementById('rpInfo').textContent = '作用于：'
-      + ((r.apply_to || []).join('、') || '（无）') + ' —— 累积会加到每次输出的百分比上，'
-      + '但仍然受「单次上限 / 绝对上限」约束。';
-}
-
-async function saveRamp() {
-  const body = {ramp: {
-      enabled: document.getElementById('rpOn').checked,
-      per_event: Number(document.getElementById('rpPerEvent').value),
-      hp_missing_pct: Number(document.getElementById('rpHp').value),
-      ceiling_pct: Number(document.getElementById('rpCeil').value),
-      decay_after_s: Number(document.getElementById('rpDecayAfter').value),
-      decay_per_s: Number(document.getElementById('rpDecayPer').value),
-      reset_on_death: document.getElementById('rpResetOnDeath').checked }};
-  try {
-    const res = await api('/api/config', {method:'POST', headers:{'Content-Type':'application/json'},
-                                          body: JSON.stringify(body)});
-    document.getElementById('rpInfo').textContent = '✓ 已保存：' + res.applied.join(', ');
-  } catch (e) {
-    document.getElementById('rpInfo').textContent = '保存失败：' + e.message;
-  }
-  await loadRamp();
-}
-
-function sliderRow(key, rule, label) {
-  const id = 'r_' + key;
-  return `<div class="row"><span><input type="checkbox" id="${id}_on" ${rule.enabled?'checked':''}>
-    ${label}</span><span><input type="range" id="${id}" min="0" max="60" step="1" value="${rule.base_pct}"
-    oninput="document.getElementById('${id}_v').textContent=this.value+'%'">
-    <b id="${id}_v">${Math.round(rule.base_pct)}%</b></span></div>`;
-}
-
-async function loadConfig() {
-  CFG = await api('/api/config');
-  document.getElementById('rules').innerHTML = Object.keys(CFG.rules)
-      .map(k => sliderRow(k, CFG.rules[k], RULES[k] || k)).join('');
-  document.getElementById('master').value = CFG.safety.master_multiplier;
-  document.getElementById('maxpct').value = CFG.safety.max_pct;
-  document.getElementById('maxabs').value = CFG.safety.max_absolute;
-  document.getElementById('cfginfo').textContent = '数据源：' + CFG.source
-      + '（bridge 里改档位；这里只改控制器的强度与设备）';
-}
-
-async function saveConfig() {
-  const rules = {};
-  Object.keys(CFG.rules).forEach(k => {
-    rules[k] = { enabled: document.getElementById('r_'+k+'_on').checked,
-                 base_pct: Number(document.getElementById('r_'+k).value) };
-  });
-  const body = { rules, safety: {
-      master_multiplier: Number(document.getElementById('master').value),
-      max_pct: Number(document.getElementById('maxpct').value),
-      max_absolute: Number(document.getElementById('maxabs').value) } };
-  const res = await api('/api/config', {method:'POST', headers:{'Content-Type':'application/json'},
-                                        body: JSON.stringify(body)});
-  document.getElementById('cfginfo').textContent = '已保存：' + res.applied.join(', ');
-  await loadConfig();
-}
-
-async function loadBridge() {
-  const s = await api('/api/status');
-  const p = (s.bridge && s.bridge.parsed) || {};
-  if (!s.bridge.exists) {
-    document.getElementById('binfo').textContent = '还没有配置文件：当前 addon 跑内置默认（safe）。'
-      + '选好档位点"写入"即可创建。';
-  } else {
-    document.getElementById('binfo').textContent = '已读取：' + s.bridge.config_path;
-  }
-  if (p.mode) document.getElementById('bmode').value = p.mode;
-  if (p.port) document.getElementById('bport').value = p.port;
-  if (p.interval) document.getElementById('bint').value = p.interval;
-  if (p.profile) document.getElementById('bprof').value = p.profile;
-  const o = p.offsets || {};
-  if (o.hp !== undefined) document.getElementById('bhp').value = o.hp;
-  if (o.hp_max !== undefined) document.getElementById('bhpma').value = o.hp_max;
-  if (o.limb_mask !== undefined) document.getElementById('blimb').value = o.limb_mask;
-  if (o.limb_shift !== undefined) document.getElementById('bshift').value = o.limb_shift;
-  if (o.dead !== undefined) document.getElementById('bdead').value = o.dead;
-}
-
-async function saveBridge() {
-  const body = {
-    mode: document.getElementById('bmode').value,
-    port: Number(document.getElementById('bport').value),
-    interval: Number(document.getElementById('bint').value),
-    profile: document.getElementById('bprof').value,
-    offsets: {
-      hp: Number(document.getElementById('bhp').value),
-      hp_max: Number(document.getElementById('bhpma').value),
-      limb_mask: Number(document.getElementById('blimb').value),
-      limb_shift: Number(document.getElementById('bshift').value),
-      dead: Number(document.getElementById('bdead').value),
-    },
-  };
-  try {
-    const res = await api('/api/bridge', {method:'POST', headers:{'Content-Type':'application/json'},
-                                          body: JSON.stringify(body)});
-    document.getElementById('binfo').textContent = res.note + '  → ' + res.path;
-  } catch (e) {
-    document.getElementById('binfo').textContent = '写入失败：' + e.message;
-  }
-  await loadBridge();
-}
-
-async function act(name) {
-  try { await api('/api/actions', {method:'POST', headers:{'Content-Type':'application/json'},
-                                   body: JSON.stringify({action:name})}); }
-  catch (e) { alert('操作失败：' + e.message); }
-  refresh();
-}
-
-async function testPulse() {
-  const pct = Number(document.getElementById('tpct').value);
-  const ms = Number(document.getElementById('tms').value);
-  try { await api('/api/actions', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({action:'test_pulse', pct, ms})}); }
-  catch (e) { alert('测试脉冲失败：' + e.message); }
-}
-
-// 控制器已经关了：按钮禁用 + 页面明说"别再监控了"（成功和"本来就没在跑"都走这里）
-function markClosed(text) {
-  window.__closed = true;
-  if (window.__timer) { clearInterval(window.__timer); window.__timer = null; }
-  document.getElementById('state').innerHTML = '<span class="dot bad"></span>控制器已关闭';
-  document.getElementById('dwarn').textContent = text;
-  const btn = document.getElementById('shutdownBtn');
-  if (btn) { btn.disabled = true; btn.textContent = '已关闭'; btn.title = '控制器已经退出'; }
-  document.getElementById('ver').textContent = (LASTVER ? 'v' + LASTVER : '') + ' · 已退出';
-  document.getElementById('dev').textContent = '设备 已断开';
-  document.getElementById('hk').textContent = '桥 离线';
-}
-
-async function shutdownApp() {
-  if (window.__closed) return;
-  if (!confirm('关闭 hd2-coyote 控制器？\n\n会先把输出归零、断开设备，然后退出程序。')) return;
-  const btn = document.getElementById('shutdownBtn');
-  if (btn) { btn.disabled = true; btn.textContent = '正在关闭…'; }
-  try {
-    const res = await api('/api/actions', {method:'POST', headers:{'Content-Type':'application/json'},
-                                           body: JSON.stringify({action:'shutdown'})});
-    markClosed('✓ ' + res.detail);
-  } catch (e) {
-    // 连不上 = 它已经退出了（最常见就是又点了一次）。这不是"失败"，别吓人。
-    markClosed('✓ 控制器已经退出（连不上服务器）。要再用一次，重新运行 run.bat 或 '
-               + 'python -m hd2coyote web。');
-  }
-}
-
-loadConfig().then(loadBridge).then(loadSources).then(loadWaves).then(loadRamp)
-    .catch(e => console.error(e));
-refresh();
-window.__timer = setInterval(refresh, 700);
-</script>
-</body>
-</html>
-"""
+PAGE = load_page()

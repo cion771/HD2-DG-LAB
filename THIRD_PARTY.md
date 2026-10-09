@@ -18,6 +18,21 @@
 | [YingXIAmour / DG-Lab-Punishment](https://github.com/YingXIAmour/DG-Lab-Punishment) | Apache-2.0 | 0.5.0 的四个特性参考了它的思路：事件源插件化（`plugins/` + `module_manager.py`）、命名波形库与波形编辑器（`pulse_data` + `pulse_wave_gui.py` 的频率换算）、"血越少越强"的惩罚模型、检查更新。**没有复制其代码**；波形库与它的 `pulse_data` JSON 格式保持互导。它的 `update.py`（杀进程 + 覆盖安装）是明确的反面教材，本项目只做"提示 + 给链接"。 |
 | DG-LAB SOCKET 协议（官方 App 的局域网控制协议） | 官方文档/协议本身 | `hd2coyote/device/dglab_socket.py` 按该协议实现控制器侧服务端。 |
 
+## Windows 桌面包
+
+桌面首页参考 DG-Lab-Punishment 的“系统状态 / 功能页面 / 日志”信息层次，以原创 Fluent 风格侧栏、卡片、SVG 图标实现；未复制其图片、背景或界面代码。
+
+EXE 包含 Python 及第三方运行库，各组件保留各自许可，不因本项目使用 MIT 而改变。打包脚本收集依赖的发行元数据 / LICENSE：
+
+| 组件 | 许可 / 用途 |
+|---|---|
+| CPython | PSF 及随附第三方声明；嵌入式 Python 运行时 |
+| pywebview / pythonnet / clr-loader | BSD-3-Clause / MIT / MIT；原生 Windows 窗口与 .NET 互操作 |
+| NumPy / Pillow / MSS / websockets / qrcode | 各自 BSD / MIT / HPND 系列许可，详见随包元数据；计算、图像、捕获、协议及二维码 |
+| bottle / proxy-tools / cffi / pycparser / typing-extensions | 各自 MIT / BSD / PSF 系列许可；间接运行依赖 |
+| Microsoft WebView2 SDK | Microsoft 许可；pywebview 附带的桥接程序集。WebView2 Runtime 需单独安装，遵循 Microsoft 条款 |
+| PyInstaller | GPL-2.0-or-later 附带 bootloader 分发例外；只用于构建，不改变本项目许可 |
+
 ## 未随仓库分发的内容
 
 - `ref/`（社区 mod 的源码导出）**不在版本库里**。它是为了核对 ModOptionsMenu 的真实 API、

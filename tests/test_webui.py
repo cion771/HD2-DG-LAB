@@ -101,6 +101,9 @@ class TestWebServer(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
+        home = mock.patch("pathlib.Path.home", return_value=self.dir)
+        home.start()
+        self.addCleanup(home.stop)
         self.cfg = AppConfig()
         self.cfg.device.kind = "mock"          # 不碰硬件
         self.config_path = self.dir / "config.json"
@@ -113,7 +116,7 @@ class TestWebServer(unittest.TestCase):
         self.base = f"http://127.0.0.1:{self.port}"
 
     def tearDown(self) -> None:
-        self.app.engine.stop()
+        self.app.close("测试结束")
         self.httpd.shutdown()
         self.httpd.server_close()
         self.thread.join(timeout=3)
@@ -124,7 +127,9 @@ class TestWebServer(unittest.TestCase):
         status, body = http("GET", self.base + "/")
         self.assertEqual(status, 200)
         html = body["raw"]
-        self.assertIn("hd2-coyote 控制台", html)
+        self.assertIn("HD2", html)
+        self.assertNotIn("/*__STYLE__*/", html)
+        self.assertNotIn("/*__SCRIPT__*/", html)
         self.assertIn("/api/status", html)
         self.assertNotIn("http://cdn", html)
         self.assertNotIn("https://", html)          # 不引任何外部资源
@@ -159,6 +164,8 @@ class TestWebServer(unittest.TestCase):
         self.assertEqual(saved["safety"]["max_absolute"], 25)
         # 引擎侧立即生效（安全上限是同一份对象）
         self.assertEqual(self.app.engine.safety.cfg.max_absolute, 25)
+        self.assertEqual(self.app.engine.safety.strength_for(100.0, 200), 0)
+        self.app.engine.arm()
         self.assertEqual(self.app.engine.safety.strength_for(100.0, 200), 25)
 
     def test_post_config_rejects_out_of_range(self) -> None:
@@ -208,6 +215,8 @@ class TestWebServer(unittest.TestCase):
         self.assertTrue(self.app.engine.safety.armed)
 
     def test_action_test_pulse_reaches_device(self) -> None:
+        self.app.action({"action": "start"})
+        self.app.action({"action": "arm"})
         status, data = http("POST", self.base + "/api/actions",
                             {"action": "test_pulse", "pct": 3, "ms": 300})
         self.assertEqual(status, 200, data)
@@ -233,7 +242,7 @@ class TestWebServer(unittest.TestCase):
         status, data = http("POST", self.base + "/api/actions", {"action": "shutdown"})
         self.assertEqual(status, 200, data)
         self.assertTrue(data["ok"])
-        self.assertIn("输出已归零", data["detail"])
+        self.assertIn("请求停止输出", data["detail"])
         self.assertFalse(self.app.engine.status.running)
         self.assertFalse(self.app.engine.device.connected)
         deadline = time.time() + 5          # 服务器应在几秒内真的停掉
@@ -267,12 +276,13 @@ class TestWebServer(unittest.TestCase):
 
         self.assertIn('id="shutdownBtn"', PAGE)
         self.assertIn("function markClosed", PAGE)
-        # 成功与"连不上（已经关了）"都走 markClosed，不再弹"关闭失败"
-        self.assertNotIn("alert('关闭失败", PAGE)
-        self.assertIn("if (window.__closed) return;", PAGE)
-        self.assertIn("btn.disabled = true", PAGE)
-        # 轮询发现服务器没了 → 也用同一个收尾函数
-        self.assertIn("markClosed('ℹ️ 连不上控制器", PAGE)
+        self.assertIn("if (closed || closing) return;", PAGE)
+        self.assertIn("$('shutdownBtn').disabled = closing || closed", PAGE)
+        # 断线不是关闭成功，必须显示未知状态并继续重连。
+        self.assertIn("function markUnavailable", PAGE)
+        self.assertIn("输出状态未知", PAGE)
+        self.assertIn("markClosed(res.detail)", PAGE)
+        self.assertNotIn("innerHTML", PAGE)
 
     def test_control_actions_appear_in_event_log(self) -> None:
         http("POST", self.base + "/api/actions", {"action": "trip"})
@@ -405,6 +415,9 @@ class TestWebAppDirect(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
+        home = mock.patch("pathlib.Path.home", return_value=Path(self.tmp.name))
+        home.start()
+        self.addCleanup(home.stop)
         self.cfg = AppConfig()
         self.cfg.device.kind = "mock"
         self.app = WebApp(self.cfg, Path(self.tmp.name) / "config.json",
@@ -436,6 +449,9 @@ class TestWaveLibraryApi(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
+        home = mock.patch("pathlib.Path.home", return_value=Path(self.tmp.name))
+        home.start()
+        self.addCleanup(home.stop)
         self.cfg = AppConfig()
         self.cfg.device.kind = "mock"
         self.path = Path(self.tmp.name) / "config.json"
@@ -502,6 +518,7 @@ class TestWaveLibraryApi(unittest.TestCase):
 
     def test_test_action_plays_the_library_wave(self) -> None:
         self.app.waves_api({"action": "set", "name": "试打", "units": ["0A0A0A0A64646464"]})
+        self.app.action({"action": "start"})
         self.app.waves_api({"action": "test", "name": "试打", "pct": 4, "ms": 300})
         self.app.engine.tick()
         self.assertGreater(self.app.engine.device.peak_strength, 0)
