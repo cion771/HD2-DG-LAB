@@ -1,332 +1,282 @@
-# hd2-DG-LAB —— 《绝地潜兵 2》× 郊狼 DG-LAB
+# hd2-DG-LAB
 
-把《绝地潜兵 2》里的**受伤、肢体损伤、阵亡**变成郊狼（DG-LAB Coyote）的电击反馈，
-强度可以在界面上随时自由调节。
+**《绝地潜兵 2》× 郊狼 DG-LAB：把受伤、肢体损伤与阵亡事件转换为设备反馈。**
 
-状态来源默认是**游戏内 Hook**：一个只读的 Lua 桥跑在游戏的 LuaJIT 里，直接读本地玩家的
-血量 / 肢体损伤 / 阵亡，通过 UDP 发给本机控制器（不用画面识别、不用标定 HUD）。
-原理、已验证项与上机步骤见 **[docs/HOOK.md](docs/HOOK.md)**。
+面向 Windows 的 Python 控制器，带本地 Web 控制台：查看游戏状态、调整规则与强度、管理波形，并通过 DG-LAB 手机 App 连接郊狼 Coyote 3.0。
+仓库名为 **hd2-DG-LAB**，Python 模块与游戏内桥仍使用 `hd2coyote` / `HD2-Coyote-Bridge`，命令中无需改名。
 
-界面是 **[Web 控制台](docs/WEBUI.md)**（浏览器打开，推荐）：
+[快速开始](#快速开始) · [连接游戏与设备](#连接游戏与设备) · [常见问题](#常见问题) · [隐私与发布检查](#隐私与发布检查) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/cion771/hd2-DG-LAB/issues)
 
-```powershell
-cd "E:\md\n mod\hd2-coyote"
-.\.venv\Scripts\python.exe -m hd2coyote web      # → http://127.0.0.1:8787/
+> [!WARNING]
+> 本项目控制人体接触式电刺激设备。使用前请完整阅读 [安全须知](SAFETY.md) 和设备说明书，**先用 mock 自测，再考虑连接真机**。
+> 禁止将电极放在头部、颈部或跨胸位置；有体内电子植入物等禁忌情况不得使用。软件限幅不能保证人体安全。
+> 游戏内桥属于实验性社区 mod，**只读不等于无风险**，不保证反作弊兼容、账号安全或游戏更新后的稳定性。
+
+## 功能一览
+
+| 功能 | 说明 |
+| --- | --- |
+| 游戏事件反馈 | 受伤、肢体损伤、阵亡；低血量反馈默认关闭 |
+| Web 控制台 | 实时状态、规则开关、强度调节、测试脉冲、桥配置与诊断 |
+| 两种状态来源 | 默认游戏内 Lua 桥；也可切换为需要标定 HUD 的屏幕识别 |
+| 可扩展事件源 | 游戏桥 UDP 与 HTTP 事件源可合流，统一经过规则与安全层 |
+| 波形库 | 内置预设、命名波形、网页编辑，以及 `pulse_data` JSON 导入/导出 |
+| 惩罚累积 | 按事件与缺失血量增加反馈，支持封顶和回落；默认关闭 |
+| 输出保护 | 百分比/绝对强度双重上限、急停、关键状态源断流静音；会话预算需自行开启 |
+| 检查更新 | 查询 GitHub Releases，只提示版本和链接，不自动下载安装 |
+
+### 工作原理
+
+```text
+《绝地潜兵 2》+ 社区加载器 + Lua 桥
+                  │ 本机 UDP 状态流（127.0.0.1:47777）
+                  ▼
+          Python 控制器 ← HTTP 事件源（可选）
+                  │ 事件判定 → 规则/波形 → 安全限幅
+                  ▼
+          WebSocket 服务（端口 9999）
+                  │ 手机 App 扫码，电脑与手机在同一局域网
+                  ▼
+          DG-LAB App ── 蓝牙 ── 郊狼 Coyote 3.0
 ```
 
-在网页里就能：看实时状态与输出强度、发测试脉冲、调每类事件的强度、
-写游戏内桥的档位与偏移、**看 addon 的 STATUS / 日志 / recon 报告**（诊断区还会提示
-"配置改了但没重启游戏"这种最容易踩的情况）。
+选择屏幕识别时，由抓屏与 HUD 检测替代 Lua 桥，不需要安装游戏 mod。
+Web 控制台负责操作控制器，**不是**手机扫码连接的 WebSocket 服务。
 
-**关闭方式**（三条任选）：网页右上角 **「关闭程序」** / 双击 **`stop.bat`** /
-`python -m hd2coyote stop` —— 都会先把输出归零、清空波形、断开设备，再退出程序。
-（顶部「急停」只是静音，需要点「重新武装」才恢复输出，它不会退出程序。）
+## 使用前准备
 
-> ⚠️ **请先读 [SAFETY.md](SAFETY.md)。** 这是控制贴在人体上的电刺激设备的软件，
-> 默认强度上限是保守值，第一次使用请务必用 `mock` 模式或最低强度试。
-> 电极**严禁跨胸、颈部、头部**。
+- **Windows + Python 3.10 或更高版本**，安装 Python 时勾选加入 PATH。
+- 安装依赖时需要联网；使用 Git 克隆则还需要 Git，也可下载仓库 ZIP。
+- 真机反馈需要 **郊狼 Coyote 3.0、DG-LAB 手机 App**，以及手机与电脑互通的可信局域网。
+- Hook 路线需要《绝地潜兵 2》、[Bingus Shared Loader](https://github.com/CowboyBingus/Helldivers2ModLoader) 及兼容的 mod 管理器。
+- [Mod Options Menu](https://github.com/CowboyBingus/ModOptionsMenu) 是可选的游戏内设置菜单，不是 Web 控制台的前置依赖。
 
----
-
-## 它是怎么工作的
-
-默认走**游戏内 Hook**（不是画面识别）：
-
-```
-┌───────────────── 《绝地潜兵 2》进程 ─────────────────┐
-│  Bingus Shared Loader（社区加载器）                   │
-│    └─ mods/hd2coyote/hd2_coyote_bridge（本项目 addon）│
-│         只读 FFI：本地玩家锚点 → hp / 肢体掩码 / 阵亡 │
-└───────────────────────┬──────────────────────────────┘
-                        │ UDP 127.0.0.1:47777（10Hz 状态流）
-┌───────────────────────▼──────────────────────────────┐
-│  hd2-coyote 控制器（本仓库，Python）                  │
-│   hook.py 收状态 → 复用同一套健康/损伤/阵亡状态机      │
-│   rules.py 事件→强度/波形/通道                        │
-│   safety.py 硬上限 / 急停 / 会话预算（唯一出口）       │
-│   device/dglab_socket.py  WebSocket 服务端            │
-└───────────────────────┬──────────────────────────────┘
-                        │ ws://<本机IP>:9999/<clientId>  ← 手机 App 扫码
-┌───────────────────────▼──────┐      蓝牙      ┌──────────────────┐
-│ DG-LAB 手机 App              │ ────────────► │ 郊狼 Coyote 3.0  │
-└──────────────────────────────┘               └──────────────────┘
-```
-
-配置里 `source` 切换来源：`"hook"`（默认）或 `"vision"`（屏幕识别，备用方案，需要标定 HUD）。
-
-### 事件源可以换（0.5.0）
-
-「游戏内桥」只是**默认**的事件源。`config.json` 的 `sources.enabled` 里能同时启用多个源，
-事件合流后走**同一套**规则层与安全层 —— 换源不会绕过任何上限：
-
-| 源 | 用途 |
-|---|---|
-| `game_bridge` | 游戏内 Lua 桥的 UDP 状态流（默认，断流会静音） |
-| `http` | 任何程序 / 别的游戏 / 直播工具 `POST` 一个 JSON 就能触发；带令牌与限速 |
-
-网页控制台的「事件源」面板能勾选、看在线状态、还能手动注入一个事件来试规则。
-协议、上报示例、以及"自己写一个源"（继承 `Source` + `@register_source`）见
-[docs/SOURCES.md](docs/SOURCES.md)。
-
-### 关于「官方支持 mod」这件事
-
-**《绝地潜兵 2》没有官方 mod API、没有 SDK、也没有 Steam Workshop 支持。**
-现在整个生态都走社区工具链（Bingus Shared Loader + Nexus/ayakamods 分发）。
-
-所以「hook 游戏」在 HD2 里的真实含义是：用社区加载器把一个 Lua 资源塞进**游戏自带的 LuaJIT**，
-addon 与游戏共享地址空间，于是能用 FFI **只读**游戏内存。本项目遵守社区红线：
-
-* ✅ 进程内、只读、不写游戏内存、不改游戏数据、不向外部网络发包（只发 127.0.0.1 的 UDP）
-* ❌ 不做外部进程 `OpenProcess` + `ReadProcessMemory`（GameGuard 最容易抓的动作）
-
-反作弊是 **nProtect GameGuard**。社区同类只读 addon（Enemy HP、G-60 Smart Targeting 等）
-在公开分发并被广泛使用，但这**不是官方保证**，风险请自行评估 —— 详见 [docs/HOOK.md](docs/HOOK.md)。
-
-> 想完全不碰游戏进程？把 `source` 改成 `"vision"`，走屏幕识别（需要标定一次 HUD）。
-> 两条路的取舍见 [docs/HOOK.md](docs/HOOK.md) 第 2 节。
-
----
+> 没有游戏或设备也可以完成 mock 自测。**安装成功、离线测试通过，不代表当前游戏构建的字段偏移已经适配。**
 
 ## 快速开始
 
+以下命令在 **PowerShell** 中运行。已有源码可直接进入项目根目录，从第 2 步开始。
+
+### 1. 获取源码
+
 ```powershell
-# 1. 依赖（建议用虚拟环境）
+git clone https://github.com/cion771/hd2-DG-LAB.git
+cd hd2-DG-LAB
+```
+
+不使用 Git：在仓库页面选择 **Code → Download ZIP**，完整解压，在含有 [requirements.txt](requirements.txt) 的目录打开终端。
+
+### 2. 安装依赖
+
+```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-
-# 2. 环境自检（会顺手检查：抓屏后端、UDP 端口、社区加载器与已发现的 addon）
-.\.venv\Scripts\python.exe -m hd2coyote doctor
-
-# 3. 打包游戏内桥（产出 build/HD2-Coyote-Bridge-<VERSION>.zip，版本号取自仓库根的 VERSION 文件）
-.\.venv\Scripts\python.exe tools\build_addon.py
-
-# 4. 启动图形界面
-.\.venv\Scripts\python.exe -m hd2coyote ui
+./.venv/Scripts/python.exe -m pip install -r requirements.txt
 ```
 
-也可以双击 `run.bat`（自动建虚拟环境并装依赖）。
+下面直接调用虚拟环境的 Python，**无需激活环境，也无需修改 PowerShell 执行策略**。
+首次运行时，如果本地配置文件 `config.json` 不存在，程序会生成默认配置；已有配置不会被上述安装命令覆盖。
+公开配置示例见 [config.example.json](config.example.json)。
 
-### 接着做四件事
-
-1. **装桥**：把第 3 步的 ZIP 用 Arsenal / HD2 Mod Manager 导入、启用、Deploy，然后重启游戏。
-   启动后确认加载器日志里出现 `mods/hd2coyote/hd2_coyote_bridge: loaded`。
-2. **跑一次 recon**（只需要一次）：addon 默认 `mode = "recon"`，进一局任务随便 ping 一下，
-   然后看 `%LOCALAPPDATA%\hd2coyote\recon_report.txt` 与 `hd2_coyote_status.txt`。
-   **血量字段的偏移必须这样确定** —— 见 [docs/HOOK.md](docs/HOOK.md) 第 5 节。
-3. **进游戏调设置**：`Esc` → **MODS** 页 → **HD2 COYOTE 郊狼** —— 先跑一次「侦察 Recon」拿到
-   `recon_report.txt`，再在同一个页面里把血量偏移填进去、切到「运行 Live」。
-   **不用改文件、不用重启游戏**（详见 [docs/HOOK.md](docs/HOOK.md) 第 6 节）。
-4. **连手机**：界面点「启动连接」，DG-LAB App 扫二维码；先点「测试脉冲 5%」确认体感再调滑块。
-
-> 只想先跑通链路？`python -m hd2coyote simulate` 用合成画面走完整流程，
-> `python tools/fake_addon.py` 用假 addon 喂 UDP 状态流。都不需要游戏和硬件。
-
----
-
-## 事件与默认强度
-
-| 事件 | 触发条件 | 默认强度 | 波形 | 通道 | 默认冷却 |
-|---|---|---|---|---|---|
-| 受伤 | 血条一次掉 ≥4%（小掉血会累计） | 16% + 每掉 10% 血 +7% | `pinch` 短按捏 400ms | A | 0.4s |
-| 肢体损伤 | 损伤图标条出现橙红色（按槽位分左肢/躯干/右肢，流血 ×1.2） | 30% | `ramp_up` 渐强 1.2s | A+B | 1.5s |
-| 阵亡 | 血条清空持续 0.8s，或阵亡模板匹配 | 45% | `death` 三段递增 4s | A+B | 5s（期间每 1.5s 重复） |
-| 低血量 | 血量 <35%（默认**关闭**） | 12% | `heartbeat` 心跳 | A+B | — |
-
-另外：手机 App 上的 **1 号反馈按钮** = 急停/恢复，可以直接用手机喊停。
-
-### 强度是怎么算的（很重要）
-
-规则里的百分比不是直接下发给硬件的数值，而是「相对手机 App 通道上限的比例」：
-
-```
-最终百分比 = min(规则百分比 × 总倍率, max_pct)          # safety.py
-实际强度   = min(通道上限 × 最终百分比, max_absolute)    # App 单位 0~200
-```
-
-* `总倍率`（默认 1.0）：一键把所有反馈整体加减档。
-* `max_pct`（默认 30%）：单次输出的百分比天花板。
-* `max_absolute`（默认 40）：**绝对天花板**，直接限制下发给设备的值。
-  想更刺激再往上抬，但请一格一格加。
-
-界面上这三项和每个事件的强度都是**实时生效**的滑块，不用重启。
-
----
-
-## 波形
-
-郊狼 3.0 的波形单元 = 16 位十六进制 = 8 字节 = 100ms 输出 = 4×25ms 子脉冲：
-
-```
-0A 0A 0A 0A | 64 64 64 64
-└─ 频率 ────┘ └─ 强度% ──┘
-  10~240Hz      0~100（任一 >100 会让这 100ms 整段静音）
-```
-
-内置预设（`waves.py`）：`pinch`（按捏）、`sting`（刺痛）、`buzz`（低频连续）、
-`ramp_up`（渐强推力）、`breath`（呼吸）、`heartbeat`（心跳）、`death`（三段递增）。
-
-### 波形库（0.5.0）
-
-除了内置预设，还能在 `config.json` 的 `waves.entries` 里存**命名波形**，然后让规则的
-`wave` 字段直接写这个名字（库里没有才退回内置预设）：
-
-```json
-"waves": { "entries": {
-  "死亡长按": { "units": ["1414141464646464"], "default_ms": 2000, "note": "参考项目死亡波形" }
-}}
-```
-
-* 一个字串 = 一个单元 = **100ms**（4×25ms 子脉冲），不够长就循环；
-* 也可以只写 `"preset": "death"` + `freq`/`peak`，等于给内置预设起个别名；
-* 网页控制台的**波形库**面板能编辑、试打、删除，并与参考项目
-  [DG-Lab-Punishment](https://github.com/YingXIAmour/DG-Lab-Punishment) 那种
-  `{"pulse_data": {"死亡": [...]}, "punish_time": {...}}` JSON **互导**（`pulse_data` 里的
-  秒数会换算成 `default_ms`）。
-
-### 惩罚累积（0.5.0）
-
-`config.json` 的 `ramp` 段打开后，在规则基础强度之上再叠一层"越来越疼"的加成：
-
-```json
-"ramp": { "enabled": true, "per_event": 2.0, "hp_missing_pct": 20.0, "ceiling_pct": 25.0,
-          "decay_after_s": 4.0, "decay_per_s": 1.5, "reset_on_death": true,
-          "apply_to": ["damage", "limb_injury"] }
-```
-
-每次命中 `per_event`、血量缺失按 `hp_missing_pct` 换算、总加成封顶 `ceiling_pct`，
-超过 `decay_after_s` 没新事件就按 `decay_per_s` 回落，`reset_on_death` 决定阵亡/复活是否清零。
-**它只是加在规则百分比上的一层**，最终照样被 `max_pct` / `max_absolute` 夹住。
-
----
-
-## 命令行
+### 3. 先做无硬件自测
 
 ```powershell
-python -m hd2coyote ui                  # 图形界面（推荐）
-python -m hd2coyote run                 # 纯命令行运行（Ctrl+C 退出）
-python -m hd2coyote run --mock          # 不接硬件，只打印输出
-python -m hd2coyote simulate            # 合成画面自测整条链路（视觉路线）
-python -m hd2coyote test-pulse --pct 5 --ms 700
-python -m hd2coyote doctor              # 环境自检：抓屏/端口/加载器/已发现 addon
-python -m hd2coyote waves
-python -m hd2coyote update --check      # 查 GitHub 有没有新版本（只提示 + 给链接，不自动安装）
-
-# 游戏内桥
-python tools\build_addon.py             # 打包成管理器可导入的 ZIP
-python tools\build_addon.py --lua-mods-dir "E:\SteamLibrary\steamapps\common\Helldivers 2\data"
-                                        # （可选）直接按手工安装路线部署 patch
-python tools\fake_addon.py              # 假装游戏内桥在发 UDP（联调）
-python tools\fake_app.py --url ws://127.0.0.1:9999/<clientId>   # 假装手机 App
+./.venv/Scripts/python.exe -m hd2coyote simulate --seconds 15
 ```
 
-没有手机也想联调协议？用自带的假 App（见上）。没有游戏想验 hook 链路？用 `fake_addon.py`。
+这个命令默认使用 **mock 设备 + 合成 HUD**，不需要游戏、手机或郊狼。
+观察终端中的事件与模拟输出，约 15 秒后结束。**不要加 `--socket`**，该参数会切换为真实设备连接。
+这一步验证的是模拟链路，不验证游戏内桥的真实偏移。
 
----
-
-## 目录结构
-
-```
-hd2coyote/
-  config.py       配置模型（config.json）
-  hook.py         游戏内桥的 UDP 数据源（默认）—— game_bridge 源的内核
-  sources/        事件源插件：base.py 注册表 + game_bridge.py + http.py
-  capture.py      抓屏（dxcam > mss > Pillow）—— vision 路线用
-  hud.py          血条自动定位、区域工具 —— vision 路线用
-  detectors.py    健康/损伤/阵亡状态机（两条数据源共用）
-  events.py       事件定义
-  rules.py        事件 → 动作（强度、波形、冷却、通道）
-  waves.py        郊狼波形生成与预设
-  wave_lib.py     命名波形库（自定义单元 / 预设别名 / 与 pulse_data JSON 互导）
-  ramp.py         惩罚累积（受伤越多、血量越少 → 加成越高，会回落）
-  update_check.py 查 GitHub Releases（只提示 + 给链接，绝不自动安装）
-  safety.py       硬上限、急停热键、会话预算
-  engine.py       调度中枢（事件源 / vision 两种循环）
-  device/
-    base.py           设备接口
-    dglab_socket.py   DG-LAB Socket 协议（WebSocket 服务端 + 二维码）
-    mock.py           干跑设备
-  simulate.py     合成 HUD 画面 / 演示脚本
-  webui.py        Web 控制台（单页 + JSON API，零外部依赖）
-  ui.py           Tkinter 界面 + 标定向导
-  __main__.py     命令行入口
-lua/hd2_coyote_bridge.lua   游戏内只读 Lua 桥（Bingus Shared Loader addon）
-tools/hd2_patch.py          .patch_N 归档读写（资源名哈希对照过官方参考值）
-tools/build_addon.py        打包成管理器可导入的 ZIP
-tools/fake_addon.py         假装游戏内桥在发 UDP
-tools/fake_app.py           假装 DG-LAB 手机 App
-docs/HOOK.md                Hook 路线：原理、已验证项、recon 步骤、排查表
-docs/WEBUI.md               Web 控制台：面板、接口、关闭与安全
-docs/SOURCES.md             事件源：内置源、HTTP 协议、自己写一个源
-tests/                      283 个单测（含 LuaJIT 侧 addon 仿真与跨语言联调）
-```
-
----
-
-## 测试
+### 4. 打开控制台
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -t . -s tests -v
+./.venv/Scripts/python.exe -m hd2coyote web
 ```
 
-覆盖五层：
+浏览器会打开 **<http://127.0.0.1:8787/>**。若没有自动打开，手动访问即可。
+也可双击 [run.bat](run.bat)：它会优先复用已有虚拟环境；没有环境时才新建并安装依赖，然后启动 Web 控制台。
 
-1. **Python 逻辑**：报文格式、波形合法性、强度夹取、急停、会话预算、配置往返、界面冒烟。
-2. **Hook 数据源**：UDP 状态流 → 事件 → 引擎输出；超时断流静音；坏包不影响正常包。
-3. **事件源与扩展（0.5.0）**：源注册表与目录、HTTP 源的令牌/限速/队列上限、状态机断流、
-   多源一起跑 + 关键源掉线静音、波形库优先于内置预设、惩罚累积的叠加/封顶/回落、
-   更新检查在 404/403/网络失败下也**只返回错误、不抛异常**。
-4. **Lua 桥（用真 LuaJIT + 假 FFI/假内存）**：LuaJIT 语法闸门、指针不被 32 位截断、
-   本地玩家定位、状态读取、recon 落盘、live 帧钩子、缺偏移拒绝启动、
-   **跨语言联调**（LuaJIT 发 UDP → Python 收 → 产出 Damage）。
-5. **打包**：`.patch_N` 往返与布局不变量、manifest 校验（纯 ASCII / 非法字符）、ZIP 结构。
+首次先查看页面，不要急着启动设备、开始检测或发送测试脉冲。
+需要在控制台继续无硬件联调时，先关闭程序，将本地配置中的 `device.kind` 改为 `"mock"`，再启动。
+真机使用前再改回 `"socket"`，并先检查安全上限。
 
-> 有一个特别值得说的回归：**LuaJIT 的 `tonumber(hex,16)` 只按 32 位解析**，
-> `0x141000000` 会被截成 `0x41000000` —— 指针一律改成逐字符解析，
-> 测试 `test_pointer_above_32bit_not_truncated` 守着这条。这类 bug 只有用游戏同款
-> LuaJIT 做离线仿真才抓得到，用 CPython 或 Lua 5.4 跑测试会一路绿到实机才炸。
+## 连接游戏与设备
 
----
+### 1. 选择状态来源
 
-## 与 DG-Lab-Game-Controller 的关系
+| 路线 | 适用场景 | 必须注意 |
+| --- | --- | --- |
+| `source: "hook"`（默认） | 通过游戏内 Lua 桥读取血量、损伤与阵亡状态，无需标定 HUD | 依赖社区加载器和构建对应的偏移；存在崩溃、卡死或反作弊风险 |
+| `source: "vision"` | 不希望接触游戏进程，改用屏幕识别 | 需要标定血条/损伤区；分辨率、HUD 缩放或画面变化会影响识别 |
 
-[LYQBING/DG-Lab-Game-Controller](https://github.com/LYQBING/DG-Lab-Game-Controller)
-是一个「控制器框架 + 第三方检测插件」的架构：插件只负责产出惩罚事件，控制器负责连设备。
+屏幕识别先修改本地配置的 `source`，再运行：
 
-本项目把「检测 + 控制器」做在了一起（不依赖 .NET 环境，Windows 上装个 Python 就能跑），
-但保留了同样的分层：如果你要接进那套框架，只需要把 `engine.inject(event)`
-（`hd2coyote/engine.py`）当成事件出口即可 —— 事件定义在 `events.py`，
-一一对应「受伤 / 肢体损伤 / 阵亡」。
+```powershell
+./.venv/Scripts/python.exe -m hd2coyote calibrate
+```
 
-后来参考 [YingXIAmour/DG-Lab-Punishment](https://github.com/YingXIAmour/DG-Lab-Punishment)
-（Apache-2.0，郊狼惩罚姬）补了四件事：**事件源插件化**（它的 `plugins/` + `module_manager`）、
-**命名波形库与网页波形编辑器**（它的 `pulse_data` + `pulse_wave_gui`，格式可互导）、
-**惩罚累积**（它的"血越少越强"惩罚模型）、**检查更新**。
-唯一明确没学的是它的 `update.py`：那种「杀主程序 + 解压覆盖安装目录」的自动更新一旦中断
-就会把安装目录搞坏，本项目只做**提示 + 给链接**。
+### 2. Hook 路线：安装并验证游戏内桥
 
----
+**先保持 mock 模式或不连接真机**，不要用人体反馈判断偏移是否正确。
+
+```powershell
+./.venv/Scripts/python.exe -m hd2coyote doctor
+./.venv/Scripts/python.exe tools/build_addon.py
+```
+
+1. 打包产物为 `build/HD2-Coyote-Bridge-<VERSION>.zip`，版本号来自 [VERSION](VERSION)。将 ZIP 用 Arsenal / HD2 Mod Manager 导入、启用、Deploy，然后重启游戏。
+2. **桥默认是 `safe`，不是 `recon` 或 `live`**：只写日志，不读取游戏内存、不发 UDP、不注册菜单。先确认 addon 加载成功。
+3. 按 [Hook 文档第 9 节](docs/HOOK.md#9-模式阶梯与两起真实事故必读) 逐级验证：`safe → net → menu → recon → live`。`net` 检查通信，`menu` 检查菜单，`recon` 收集字段定位证据。
+4. 在任务内进行 recon，结合真实血量变化核对 `hp` / `hp_max` 等字段，再填写偏移；**不要照抄示例偏移**。游戏更新后需要重新确认，不能假定只做一次就永久有效。
+5. 确认状态读数与实际一致后才切 `live`。在 Web 控制台点击「开始检测」，检查受伤、阵亡与复活是否正确；真机连接留到下一步。
+
+**两处设置的生效方式不同：** Web 控制台写入桥配置后需重启游戏；游戏内 MODS 菜单已成功注册时，其支持的选项可按 APPLY 应用。
+诊断区可以查看实际运行档位、状态与 recon 报告。详细步骤见 [Hook 文档](docs/HOOK.md)。
+
+### 3. 连接手机与郊狼
+
+1. 在 DG-LAB App 中通过蓝牙连接设备，按设备说明确认使用条件与禁忌。电脑和手机连接同一可信局域网。
+2. 将控制器设备类型设为 `socket` 并重启；先把控制器上限与 App 通道上限降至低档，确认急停方式可用。
+3. 在 Web 控制台点击 **「启动设备（二维码）」**，用 App 扫码，等待连接状态确认。
+4. 完成无硬件验证后，才考虑短时、低强度测试脉冲；从最低可感知水平谨慎调整。**5% 不是对所有人的安全保证。**
+5. 点击「开始检测」，核对游戏事件与反馈。异常时立即急停，必要时直接关闭设备。
+
+### 网络与端口
+
+| 用途 | 默认地址/端口 | 访问范围 |
+| --- | --- | --- |
+| Web 控制台 | `http://127.0.0.1:8787/` | 仅电脑本机；可控制实际输出 |
+| 游戏桥状态 | UDP `127.0.0.1:47777` | 游戏与控制器之间的本机通信 |
+| 手机扫码连接 | WebSocket `9999`，默认监听 `0.0.0.0` | 手机访问电脑的局域网地址；不是 `127.0.0.1` |
+| HTTP 事件源（可选） | `http://127.0.0.1:47778/` | 默认本机，启用该源后使用 |
+
+只对可信专用网络放行必要的手机连接端口。不要关闭整个防火墙，也不要将这些接口做公网映射。
+`0.0.0.0` 表示监听所有网卡，不是扫码地址；多网卡时可在本地配置的 `device.advertise_ip` 指定手机可达的电脑局域网 IP。
+
+### 急停与退出
+
+- **急停**：网页「急停」或默认热键 **F12**，静音并解除武装；确认问题排除后再点「重新武装」。App 的 **1 号反馈按钮**也可切换急停/恢复，避免误触恢复。
+- **正常退出**：优先用网页「关闭程序」，程序会尝试归零、清空波形并断开设备。**只关浏览器标签页不会停止后台控制器。**
+- **命令退出**：双击 [stop.bat](stop.bat)，或执行以下命令：
+
+```powershell
+./.venv/Scripts/python.exe -m hd2coyote stop --no-force
+```
+
+`--no-force` 只请求正常退出；不带该参数或使用 [stop.bat](stop.bat) 时，失败后可能强制结束进程。
+**强杀、断网或程序卡死不能保证归零指令已送达**，请在 App/设备端确认输出已停止；必要时直接关闭设备。
+
+## 事件与强度
+
+下表为默认规则的**请求强度**，不是设备实际输出；所有规则仍受安全上限约束。
+
+| 事件 | 默认请求强度 | 波形 / 时长 | 通道 | 冷却 |
+| --- | --- | --- | --- | --- |
+| 受伤 | 16% + 每损失 10 个血量百分点增加 7 个强度百分点 | `pinch` / 400ms | A | 0.4s |
+| 肢体损伤 | 30%；带流血标记时 ×1.2 | `ramp_up` / 1200ms | A+B | 每槽位 1.5s |
+| 阵亡 | 45% | `death` / 4000ms | A+B | 5s |
+| 低血量 | 12%，默认关闭 | `heartbeat` / 1200ms | A+B | 无；周期 1.5s |
+
+默认掉血判定阈值为 4 个血量百分点，低血量阈值为 35%。Hook 使用上报的血量和损伤字段，vision 使用血条/图标检测，不要把视觉判定条件当成桥的工作方式。
+阵亡规则另有 `repeat_ms = 1500` 的重复脉冲配置。具体参数见 [配置示例](config.example.json) 与 [配置模型](hd2coyote/config.py)。
+
+### 双重限幅
+
+```text
+最终百分比 = min(请求百分比 × 总倍率, max_pct)
+设备强度   = min(round(App 通道上限 × 最终百分比 / 100), App 通道上限, max_absolute)
+```
+
+默认总倍率为 `1.0`，`max_pct = 30`，`max_absolute = 40`（App 强度单位）；解除武装时输出为 0。
+例如阵亡请求 45%，在默认百分比上限下最多按 30% 换算；若 App 通道上限为 100，换算结果为 30，而不是 45。这只是算法示例，不是推荐人体使用档位。
+
+规则强度与安全上限可在页面调整；会话预算 `safety.max_session_seconds` 默认 `0`（未启用），焦点丢失静音默认关闭，需要时请自行开启。
+
+## 扩展功能
+
+- **事件源**：默认启用 `game_bridge`；在控制台可启用 `http`，接收其他程序的 JSON 事件或状态。HTTP 支持限速，**令牌仅在 `sources.http_token` 非空时启用**，默认不能当作已鉴权服务。协议与扩展接口见 [事件源文档](docs/SOURCES.md)。
+- **波形库**：内置 `pinch`、`sting`、`buzz`、`ramp_up`、`breath`、`heartbeat`、`death`；支持自定义 16 个十六进制字符的单元（每单元 100ms）、预设别名，以及与参考项目 `pulse_data` JSON 的互导。规则优先查找命名波形库，再使用内置预设。
+- **惩罚累积**：默认关闭；启用后按事件和缺失血量增加请求强度，再按时间回落，仍受双重限幅。配置项位于 `ramp`。
+- **检查更新**：手动查询 GitHub Releases，不覆盖本地文件。若尚未发布 Release，查询不到版本不代表安装失败。
+
+界面面板与 API 见 [Web 控制台文档](docs/WEBUI.md)。
+
+## 常用命令
+
+以下命令均在项目根目录执行，不会因为仓库改名而改变模块名。
+
+```powershell
+./.venv/Scripts/python.exe -m hd2coyote web                  # Web 控制台（推荐）
+./.venv/Scripts/python.exe -m hd2coyote ui                   # Tkinter 桌面界面
+./.venv/Scripts/python.exe -m hd2coyote doctor               # 环境与桥诊断
+./.venv/Scripts/python.exe -m hd2coyote run --mock           # mock 接收事件，不连硬件
+./.venv/Scripts/python.exe -m hd2coyote simulate --seconds 15 # 合成画面自测
+./.venv/Scripts/python.exe -m hd2coyote waves                # 查看内置波形
+./.venv/Scripts/python.exe -m hd2coyote stop --no-force      # 正常关闭 Web 控制台
+./.venv/Scripts/python.exe -m hd2coyote update --check --repo cion771/hd2-DG-LAB
+```
+
+Hook 无游戏联调：在一个终端运行 `run --mock`，另一个终端运行以下命令；测试时不要同时运行真实游戏桥，以免状态混入。
+
+```powershell
+./.venv/Scripts/python.exe tools/fake_addon.py
+```
+
+更多参数可执行 `python -m hd2coyote --help`。真实设备测试请先完成安全检查，不要同时启动多个控制器占用同一端口。
 
 ## 常见问题
 
-| 现象 | 处理 |
-|---|---|
-| 加载器日志里没有 `mods/hd2coyote/…: loaded` | 用管理器重装 ZIP；`-- HD2-Addon:` 首行不能被改（打包脚本会校验）；别和别的 mod 抢同一个 `.patch_N` 编号 |
-| 界面一直「等待游戏内 Lua 桥上报」 | 端口被占用或 addon 没加载：`python -m hd2coyote doctor` 看 Hook 端口与加载器日志 |
-| `STATUS.txt` 写 `FAILED - …` | 打开 `%LOCALAPPDATA%\hd2coyote\hd2_coyote_bridge.log` 看原因；recon 未找到玩家就进局内重跑 |
-| recon 找不到本地玩家 | 要在**局内**（飞船里 ping actor 可能没建立）；或该构建的 `ping_actors` 偏移已漂移 |
-| 有状态但事件不触发 | 血量是**绝对值**口径（`hp` + `hp_max`）；确认 `hp_max` 读对、`limb_mask_bits` 与游戏位定义一致 |
-| 手机扫码连不上 | 手机与电脑同一局域网；Windows 防火墙放行 9999 端口；换 `advertise_ip` 指定 IP |
-| 检测到受伤但没感觉 | 手机 App 的通道强度上限太低；`max_absolute` 太小；波形强度是相对值，先把通道强度调上去 |
-| 想更灵敏/更迟钝 | 改 `config.json` 里 `detect` 段的阈值：`damage_min_pct`、`dead_hold_s`、`injury_min_fraction` |
-| 走 vision 时抓到全黑画面 | 改「无边框窗口」；确认抓屏的是游戏所在那块屏；HDR 建议关掉 |
-| 走 vision 时血量一直是 0/100 | 血条框选不准，重新标定；改分辨率或 HUD 缩放后必须重标 |
+| 现象 | 排查方法 |
+| --- | --- |
+| 双击后提示缺少 Python 或模块 | 确认 Python 3.10+ 已加入 PATH；若复用了旧虚拟环境，按快速开始重新安装依赖 |
+| 控制台打不开 | 确认程序仍在运行；检查 8787 端口占用，也可用 `web --port 8788`，退出命令需使用同一端口 |
+| 等待 Lua 桥上报 | 先看运行档位：`safe` 不发 UDP 是正常行为；运行 `doctor`，确认 addon 加载且双方端口一致 |
+| recon 找不到玩家或状态异常 | 在任务内验证；检查当前构建与 profile 是否匹配，不猜偏移，不连接真机继续试 |
+| 网页改了桥配置却没生效 | 重启游戏，并在诊断区核对实际运行档位；区分 Web 文件配置与游戏内菜单设置 |
+| 游戏崩溃或黑屏 | 先急停并断开设备，再通过 mod 管理器禁用本桥并重新部署；按 Hook 文档的回退流程排查 |
+| 手机扫码失败 | 手机与电脑需互通；检查访客 Wi-Fi 隔离、防火墙、VPN/虚拟网卡及 `device.advertise_ip` |
+| 有事件但没有输出 | 检查武装状态、设备连接、规则开关、冷却和 App 通道上限；不要直接提高强度排错 |
+| 视觉模式黑屏或血量不准 | 尝试无边框窗口，核对显示器；调整 HDR 后测试；分辨率/HUD 缩放变化后重新标定 |
+| 检查更新报错 | 核对仓库设置，可用上面的 `--repo` 命令；网络限制或尚无 Release 不影响本地控制功能 |
 
----
+无法解决时可提交 [Issue](https://github.com/cion771/hd2-DG-LAB/issues)，附软件版本、Python/游戏版本、所用路线、复现步骤和**脱敏后的最小错误片段**。请勿直接上传完整诊断目录。
 
-## 可扩展方向
+## 隐私与发布检查
 
-* 更多事件：战略配备就绪、增援用尽、任务失败、被追踪者锁定……（桥已经有一个位置明确的状态协议，
-  加字段即可；Python 侧加一个 Tracker 就行）
-* 更细的部位映射：把肢体掩码的每一位映射到不同通道 / 不同波形。
-* 更多设备：`device/` 下新增实现即可（例如直接蓝牙连郊狼 V2/V3）。
-* 桥的其他出口：现在只发 127.0.0.1 UDP；也可以改成命名管道或文件 tail（都不需要更多依赖）。
+**不要将任何隐私资料上传到 GitHub，包括 Issue、PR 附件、Release 压缩包和截图。**
+
+- 不提交真实的本地配置、令牌/密钥、扫码二维码、连接标识、设备标识、账号信息、真实网络地址或带用户名的绝对路径。示例使用占位符与本机回环地址。
+- 不上传原始运行日志、recon 报告、内存转储、崩溃报告、游戏截图或本机 mod 列表；这些内容可能暴露路径、账号、地址或环境信息。诊断内容留在本地，反馈前逐项脱敏。
+- 本地配置、运行日志、桥配置、模板目录及构建目录等已有部分 [Git 忽略规则](.gitignore)。**忽略规则不是隐私审计**：改名文件、其他目录的报告和已经跟踪的文件仍可能进入提交。
+- 不要直接压缩整个工作目录发布；分享配置时只基于 [公开示例](config.example.json) 制作脱敏样例，截图必须遮挡二维码、地址、账号和路径。
+- 提交前在本地检查 `git status --short`、`git diff`；暂存后检查 `git diff --cached --name-only` 和 `git diff --cached`。避免未经审查的 `git add .`。
+- 若隐私已经进入公开提交或历史，删除当前文件并不足够；应先撤销/轮换泄露凭据，再按 GitHub 的敏感数据移除流程处理历史及相关附件。
+
+游戏桥默认只向本机发 UDP；手机连接在局域网内。**这不代表所有功能都离线**：安装依赖会访问包源，检查更新会访问 GitHub。请保持 Web 控制台与 HTTP 事件源默认的本机监听，不要将能触发设备输出的接口暴露到公网。
+
+## 开发与文档
+
+| 入口 | 内容 |
+| --- | --- |
+| [Hook 文档](docs/HOOK.md) | 桥原理、模式阶梯、偏移验证、诊断与回退 |
+| [Web 控制台](docs/WEBUI.md) | 面板、API、配置与关闭行为 |
+| [事件源](docs/SOURCES.md) | HTTP 协议、状态包与自定义源 |
+| [核心代码](hd2coyote/) | 检测、规则、波形、安全层与设备协议 |
+| [Lua 桥](lua/hd2_coyote_bridge.lua) / [工具](tools/) | 游戏内 addon、打包与模拟工具 |
+| [测试](tests/) / [更新记录](CHANGELOG.md) | 回归测试与版本变更 |
+
+```powershell
+./.venv/Scripts/python.exe -m unittest discover -t . -s tests -v
+```
+
+测试涵盖规则、安全限幅、事件源、波形、Web API、UDP 链路与打包；部分 Lua 桥测试需要 LuaJIT 环境。离线测试不替代真实游戏版本适配与设备安全验证。
+
+## 致谢与许可
+
+- [YingXIAmour / DG-Lab-Punishment](https://github.com/YingXIAmour/DG-Lab-Punishment)：参考其易于上手的文档结构，以及事件源、波形管理、累积反馈与更新提示的设计思路。两者是独立项目，安装步骤与端口不同。
+- [LYQBING / DG-Lab-Game-Controller](https://github.com/LYQBING/DG-Lab-Game-Controller)：参考事件检测与设备控制分层的思路。
+- [DG-LAB 官方开源协议](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE)：设备与 Socket 协议资料。
+- 社区加载器、菜单和本地玩家定位参考的完整署名见 [第三方说明](THIRD_PARTY.md)。
+
+本项目采用 [MIT License](LICENSE)。与 Arrowhead Game Studios、Sony、DG-LAB 均无关联或官方背书。
+软件按现状提供，不承诺适用于所有游戏版本或设备环境；使用者应遵守游戏条款、当地法律与设备说明，并自行评估账号、设备及人身风险。
