@@ -1,4 +1,4 @@
-"""Tkinter 界面：连接手机 App、标定 HUD、实时调强度、急停。
+"""Tkinter 界面：连接手机 App、接收游戏状态、实时调强度、急停。
 
 界面只做三件事：改配置（立刻生效）、看状态、点急停。
 所有实际输出都在 Engine / SafetyGuard 里，界面不直接碰设备。
@@ -12,10 +12,8 @@ from collections import deque
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from .capture import ScreenGrabber
-from .config import AppConfig, Box, CaptureConfig
+from .config import AppConfig
 from .engine import Engine
-from .hud import default_injury_zone, HudLayout
 from .safety import HotkeyWatcher
 
 RULE_LABELS = {
@@ -24,108 +22,6 @@ RULE_LABELS = {
     "death": "阵亡",
     "low_health": "低血量",
 }
-
-
-# --------------------------------------------------------------------- 工具
-def capture_screen(monitor: int = 0):
-    """返回 (PIL.Image, origin_x, origin_y)。"""
-    from PIL import Image
-
-    grab = ScreenGrabber(CaptureConfig(monitor=monitor, backend="auto"))
-    frame = grab.full_frame()
-    origin = grab.origin
-    grab.close()
-    return Image.fromarray(frame), origin[0], origin[1]
-
-
-def capture_box_to_file(box: Box, path: str | Path, monitor: int = 0) -> bool:
-    from PIL import Image
-
-    grab = ScreenGrabber(CaptureConfig(monitor=monitor, backend="auto"))
-    try:
-        frame = grab.grab(box)
-    finally:
-        grab.close()
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(frame).save(p)
-    return True
-
-
-class RegionSelector(tk.Toplevel):
-    """在整屏截图上拖拽框选一个区域。"""
-
-    def __init__(self, master: tk.Misc, title: str, on_done, max_w: int = 1500,
-                 max_h: int = 820) -> None:
-        super().__init__(master)
-        self.title(title)
-        self.on_done = on_done
-        self.attributes("-topmost", True)
-        image, ox, oy = capture_screen(0)
-        self._origin = (ox, oy)
-        w, h = image.size
-        self.scale = min(1.0, max_w / w, max_h / h)
-        self._image = image.resize((int(w * self.scale), int(h * self.scale)))
-        self._photo = None
-        try:
-            from PIL import ImageTk
-
-            self._photo = ImageTk.PhotoImage(self._image)
-        except Exception as exc:  # pragma: no cover
-            messagebox.showerror("缺少 Pillow ImageTk", str(exc))
-            self.destroy()
-            return
-
-        tk.Label(self, text="按住左键拖拽框选，然后点「确定」").pack(anchor="w", padx=6)
-        self.canvas = tk.Canvas(self, width=self._image.width, height=self._image.height,
-                                cursor="crosshair", highlightthickness=0)
-        self.canvas.pack()
-        self.canvas.create_image(0, 0, anchor="nw", image=self._photo)
-        self.canvas.bind("<Button-1>", self._press)
-        self.canvas.bind("<B1-Motion>", self._drag)
-        self.canvas.bind("<ButtonRelease-1>", self._release)
-        self._rect = None
-        self._start = (0, 0)
-        self._end = (0, 0)
-
-        bar = ttk.Frame(self)
-        bar.pack(fill="x", pady=6)
-        ttk.Button(bar, text="取消", command=self.destroy).pack(side="right", padx=6)
-        ttk.Button(bar, text="确定", command=self._finish).pack(side="right")
-        self.grab_set()
-
-    # ------------------------------------------------------------ 事件
-    def _press(self, event) -> None:
-        self._start = (event.x, event.y)
-        self._end = (event.x, event.y)
-        if self._rect is not None:
-            self.canvas.delete(self._rect)
-        self._rect = self.canvas.create_rectangle(*self._start, *self._end,
-                                                  outline="#ff3b30", width=2)
-
-    def _drag(self, event) -> None:
-        self._end = (event.x, event.y)
-        if self._rect is not None:
-            self.canvas.coords(self._rect, *self._start, *self._end)
-
-    def _release(self, event) -> None:
-        self._end = (event.x, event.y)
-
-    def _finish(self) -> None:
-        x0, x1 = sorted((self._start[0], self._end[0]))
-        y0, y1 = sorted((self._start[1], self._end[1]))
-        if x1 - x0 < 4 or y1 - y0 < 4:
-            messagebox.showwarning("范围太小", "请拖拽出一个更大的区域")
-            return
-        s = self.scale
-        box = Box(
-            int(self._origin[0] + x0 / s),
-            int(self._origin[1] + y0 / s),
-            int((x1 - x0) / s),
-            int((y1 - y0) / s),
-        )
-        self.destroy()
-        self.on_done(box)
 
 
 # --------------------------------------------------------------------- 主窗口
@@ -153,12 +49,7 @@ class MainWindow:
         row = ttk.Frame(frame)
         row.pack(fill="x", padx=6, pady=4)
 
-        ttk.Label(row, text="状态来源").pack(side="left")
-        self.var_source = tk.StringVar(value=self.cfg.source)
-        ttk.Combobox(row, textvariable=self.var_source, width=8, state="readonly",
-                     values=["hook", "vision"]).pack(side="left", padx=4)
-        ttk.Label(row, text="hook = 游戏内 Lua 桥（推荐）｜vision = 屏幕识别（要标定）",
-                  foreground="#666").pack(side="left", padx=4)
+        ttk.Label(row, text="状态来源：游戏桥 / HTTP 事件源").pack(side="left")
         row2 = ttk.Frame(frame)
         row2.pack(fill="x", padx=6, pady=4)
         ttk.Label(row2, text="模式").pack(side="left")
@@ -253,16 +144,12 @@ class MainWindow:
 
         sep2 = ttk.Separator(right)
         sep2.pack(fill="x", pady=8)
-        cal = ttk.LabelFrame(right, text="④ 标定 HUD")
+        cal = ttk.LabelFrame(right, text="④ 测试与保存")
         cal.pack(fill="x", padx=6, pady=4)
-        ttk.Button(cal, text="标定血条", command=self._cal_hp).grid(row=0, column=0, padx=4, pady=4)
-        ttk.Button(cal, text="标定损伤区", command=self._cal_injury).grid(row=0, column=1, padx=4)
-        ttk.Button(cal, text="标定阵亡区+存模板",
-                   command=self._cal_death).grid(row=1, column=0, columnspan=2, padx=4, pady=4)
         ttk.Button(cal, text="测试脉冲 5%", command=self._test).grid(row=2, column=0, padx=4, pady=4)
         ttk.Button(cal, text="保存配置", command=self._save).grid(row=2, column=1, padx=4)
-        self.lbl_cal = ttk.Label(cal, text="", foreground="#0a0")
-        self.lbl_cal.grid(row=3, column=0, columnspan=2, sticky="w", padx=6)
+        self.lbl_notice = ttk.Label(cal, text="", foreground="#0a0")
+        self.lbl_notice.grid(row=3, column=0, columnspan=2, sticky="w", padx=6)
 
     def _slider(self, parent, label, var, lo, hi, on_change, fmt) -> None:
         box = ttk.Frame(parent)
@@ -276,7 +163,6 @@ class MainWindow:
 
     # ------------------------------------------------------------ 动作
     def _start_device(self) -> None:
-        self.cfg.source = self.var_source.get()
         self.cfg.device.kind = self.var_kind.get()
         try:
             self.cfg.device.port = int(self.var_port.get())
@@ -365,50 +251,16 @@ class MainWindow:
     def _countdown(self, n: int) -> None:
         if n <= 0:
             self.engine.test_pulse(pct=5.0, ms=700)
-            self.lbl_cal.config(text="已发送测试脉冲（5%）")
+            self.lbl_notice.config(text="已发送测试脉冲（5%）")
             return
-        self.lbl_cal.config(text=f"{n} 秒后输出测试脉冲……（点急停可中止）")
+        self.lbl_notice.config(text=f"{n} 秒后输出测试脉冲……（点急停可中止）")
         self.root.after(1000, lambda: self._countdown(n - 1))
-
-    # ------------------------------------------------------------ 标定
-    def _apply_box(self, which: str, box: Box) -> None:
-        layout = HudLayout.from_config(self.cfg.hud)
-        if which == "hp":
-            layout.hp_bar = box
-            if not (self.cfg.hud.injury_zone and self.cfg.hud.injury_zone.is_valid()):
-                w, h = self.engine.grabber.size if self.engine.grabber else (1920, 1080)
-                layout.injury_zone = default_injury_zone(box, w, h)
-        elif which == "injury":
-            layout.injury_zone = box
-        elif which == "death":
-            layout.death_probe = box
-        layout.to_config(self.cfg.hud)
-        if which == "death":
-            path = Path("templates") / "death.png"
-            capture_box_to_file(box, path)
-            self.cfg.hud.death_template = str(path)
-        self.engine.set_config(self.cfg)
-        self._save(silent=True)
-        self.lbl_cal.config(text=f"已标定 {which}: {box}")
-
-    def _cal_hp(self) -> None:
-        RegionSelector(self.root, "框选血条（尽量贴紧血条内部）",
-                       lambda box: self._apply_box("hp", box))
-
-    def _cal_injury(self) -> None:
-        RegionSelector(self.root, "框选损伤图标条（血条左侧的图标区域）",
-                       lambda box: self._apply_box("injury", box))
-
-    def _cal_death(self) -> None:
-        messagebox.showinfo("阵亡标定", "请先在游戏里进入阵亡/等待增援画面，再框选特征区域（如提示文字）")
-        RegionSelector(self.root, "框选阵亡画面特征区域",
-                       lambda box: self._apply_box("death", box))
 
     def _save(self, silent: bool = False) -> None:
         try:
             self.cfg.save(self.config_path)
             if not silent:
-                self.lbl_cal.config(text=f"已保存到 {self.config_path}")
+                self.lbl_notice.config(text=f"已保存到 {self.config_path}")
         except Exception as exc:
             messagebox.showerror("保存失败", str(exc))
 
@@ -417,11 +269,7 @@ class MainWindow:
         st = self.engine.status
         hp = "--" if st.hp is None else f"{st.hp * 100:5.1f}%"
         self.lbl_hp.config(text=f"HP: {hp}")
-        if st.source == "hook":
-            self.lbl_injury.config(text=st.hook_detail or "等待游戏内 Lua 桥上报……")
-        else:
-            inj = ", ".join(f"{v:.2f}" for v in st.injury) or "--"
-            self.lbl_injury.config(text=f"损伤像素: {inj}")
+        self.lbl_injury.config(text=st.hook_detail or "等待游戏内 Lua 桥上报……")
         flag = "运行中" if st.running else "已停止"
         armed = "已武装" if self.engine.safety.armed else f"已静音({self.engine.safety.mute_reason})"
         self.lbl_out.config(
@@ -452,7 +300,7 @@ class MainWindow:
             self.cfg.safety.pause_key.upper(): self._toggle_detect,
         })
         self._hotkeys.start()
-        self.lbl_cal.config(text="提示：先「启动连接」，再用 App 扫码；然后「标定血条」")
+        self.lbl_notice.config(text="提示：先「启动连接」，再用 App 扫码；然后启动检测")
         self.root.mainloop()
 
     def _toggle_detect(self) -> None:
@@ -473,19 +321,3 @@ def _describe(event) -> str:
 # --------------------------------------------------------------------- 入口
 def run_ui(cfg: AppConfig, config_path: Path) -> None:
     MainWindow(cfg, config_path).run()
-
-
-def run_calibration(cfg: AppConfig, config_path: Path) -> None:
-    root = tk.Tk()
-    root.withdraw()
-    layout = HudLayout.from_config(cfg.hud)
-
-    def done_hp(box: Box) -> None:
-        layout.hp_bar = box
-        cfg.hud.hp_bar = box
-        cfg.save(config_path)
-        root.destroy()
-
-    RegionSelector(root, "框选血条（贴紧血条内部）", done_hp)
-    root.mainloop()
-    print(f"血条已保存：{cfg.hud.hp_bar}")

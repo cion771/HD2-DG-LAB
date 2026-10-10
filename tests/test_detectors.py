@@ -1,72 +1,10 @@
-"""检测层测试：合成 HUD 画面 -> 事件（不需要游戏、不需要硬件）。"""
-
-from __future__ import annotations
+"""共享状态机测试：结构化状态 -> 事件，不需要图像或硬件。"""
 
 import unittest
 
-import numpy as np
-
 from hd2coyote.config import AppConfig, DetectConfig
-from hd2coyote.detectors import (DeathTracker, Detector, HealthTracker, InjuryTracker,
-                                 bar_fill_ratio, injury_scores)
+from hd2coyote.detectors import DeathTracker, EventTrackers, HealthTracker, InjuryTracker
 from hd2coyote.events import Damage, Death, LimbInjury, LowHealth, Revive
-from hd2coyote.hud import auto_locate_hp_bar, default_injury_zone, default_layout
-from hd2coyote.simulate import synthetic_frame
-
-SIZE = (1920, 1080)
-
-
-def make_cfg() -> AppConfig:
-    cfg = AppConfig()
-    layout = default_layout(*SIZE)
-    cfg.hud.hp_bar = layout.hp_bar
-    cfg.hud.injury_zone = layout.injury_zone
-    cfg.hud.injury_slots = 3
-    return cfg
-
-
-class TestPixelLayer(unittest.TestCase):
-    def setUp(self) -> None:
-        self.layout = default_layout(*SIZE)
-
-    def test_fill_ratio_half(self) -> None:
-        frame = synthetic_frame(self.layout, hp=0.5, size=SIZE)
-        ratio = bar_fill_ratio(frame, self.layout.hp_bar)
-        self.assertIsNotNone(ratio)
-        self.assertAlmostEqual(ratio, 0.5, delta=0.06)
-
-    def test_fill_ratio_empty_and_dead(self) -> None:
-        self.assertLess(bar_fill_ratio(synthetic_frame(self.layout, hp=0.0, size=SIZE),
-                                       self.layout.hp_bar), 0.05)
-        self.assertLess(bar_fill_ratio(synthetic_frame(self.layout, hp=1.0, dead=True, size=SIZE),
-                                       self.layout.hp_bar), 0.05)
-
-    def test_injury_slots(self) -> None:
-        frame = synthetic_frame(self.layout, hp=0.8, injured=(True, False, False), size=SIZE)
-        scores, bleeding = injury_scores(frame, self.layout.injury_zone, 3)
-        self.assertGreater(scores[0], 0.05)
-        self.assertLess(scores[1], 0.01)
-        self.assertGreater(bleeding, 0.0)
-
-    def test_no_injury(self) -> None:
-        frame = synthetic_frame(self.layout, hp=1.0, size=SIZE)
-        scores, bleeding = injury_scores(frame, self.layout.injury_zone, 3)
-        self.assertTrue(all(s < 0.005 for s in scores))
-        self.assertLess(bleeding, 0.005)
-
-    def test_auto_locate_finds_bar(self) -> None:
-        frame = synthetic_frame(self.layout, hp=0.7, size=SIZE)
-        found = auto_locate_hp_bar(frame)
-        self.assertIsNotNone(found)
-        assert found is not None and self.layout.hp_bar is not None
-        # 找到的条应当与真实血条在横向上基本重合
-        self.assertLess(abs(found.x - self.layout.hp_bar.x), 12)
-        self.assertGreater(found.w, self.layout.hp_bar.w * 0.6)
-
-    def test_default_injury_zone_is_left_of_bar(self) -> None:
-        assert self.layout.hp_bar is not None
-        zone = default_injury_zone(self.layout.hp_bar, *SIZE)
-        self.assertLess(zone.x + zone.w, self.layout.hp_bar.x + 4)
 
 
 class TestTrackers(unittest.TestCase):
@@ -117,22 +55,21 @@ class TestTrackers(unittest.TestCase):
         events = tracker.update(0.9, 0.0, 1.5, 0.72)
         self.assertTrue(any(isinstance(e, Revive) for e in events))
 
-    def test_death_by_template_score(self) -> None:
+    def test_death_by_state_flag(self) -> None:
         tracker = DeathTracker(DetectConfig(dead_hold_s=0.5))
         self.assertEqual(tracker.update(1.0, 0.9, 0.0, 0.72), [])
         self.assertTrue(any(isinstance(e, Death) for e in tracker.update(1.0, 0.9, 0.6, 0.72)))
 
 
-class TestDetectorEndToEnd(unittest.TestCase):
+class TestStateEndToEnd(unittest.TestCase):
     def test_full_timeline(self) -> None:
-        cfg = make_cfg()
-        detector = Detector(cfg)
-        layout = default_layout(*SIZE)
+        cfg = AppConfig()
+        detector = EventTrackers(cfg)
         seen: list[str] = []
 
         def feed(t: float, hp: float, injured=(), dead=False) -> None:
-            frame = synthetic_frame(layout, hp=hp, injured=injured, dead=dead, size=SIZE)
-            for ev in detector.process(frame, t):
+            scores = [float(v) for v in injured] + [0.0] * (3 - len(injured))
+            for ev in detector.process(hp, scores, 0.0, float(dead), t):
                 seen.append(type(ev).__name__)
 
         feed(0.0, 1.00)
@@ -148,13 +85,10 @@ class TestDetectorEndToEnd(unittest.TestCase):
         self.assertIn("LimbInjury", seen)
         self.assertIn("Death", seen)
         self.assertIn("Revive", seen)
-        self.assertEqual(detector.sample.hp is not None, True)
 
-    def test_uncalibrated_does_not_crash(self) -> None:
-        cfg = AppConfig()  # 没有标定
-        detector = Detector(cfg)
-        frame = np.zeros((100, 100, 3), dtype=np.uint8)
-        self.assertEqual(detector.process(frame, 0.0), [])
+    def test_missing_state_does_not_create_events(self) -> None:
+        trackers = EventTrackers(AppConfig())
+        self.assertEqual(trackers.process(None, [], 0.0, 0.0, 0.0), [])
 
 
 if __name__ == "__main__":

@@ -433,8 +433,8 @@ class WebApp:
         applied: list[str] = []
         if "source" in patch:
             source = str(patch["source"])
-            if source not in ("hook", "vision"):
-                raise ValueError("source 只能是 hook 或 vision")
+            if source != "hook":
+                raise ValueError("屏幕识别已移除；source 只能是 hook，事件源请在 sources.enabled 中配置")
             self.cfg.source = source
             applied.append(f"source={source}")
 

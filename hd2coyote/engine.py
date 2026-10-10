@@ -1,7 +1,7 @@
-"""引擎：抓屏 -> 检测 -> 规则 -> 安全换算 -> 设备输出。
+"""引擎：事件源 -> 状态判定 -> 规则 -> 安全换算 -> 设备输出。
 
 线程模型（简单优先）：
-   一个后台线程按 fps 跑循环：抓帧、检测、触发动作、推进强度渐变。
+   一个后台线程轮询事件源：处理状态、触发动作、推进强度渐变。
    设备（WebSocket）在自己的线程里跑 asyncio，引擎只调用它的同步接口。
 """
 
@@ -15,9 +15,7 @@ from dataclasses import dataclass, field, replace
 from typing import Callable
 
 from . import wave_lib, waves
-from .capture import CaptureError, ScreenGrabber, is_black_frame
 from .config import AppConfig
-from .detectors import Detector, HudSample
 from .device import Device, create_device
 from .events import Damage, Death, DeviceState, Event, FeedbackButton, LimbInjury, LowHealth, Revive
 from .hook import HookSource
@@ -66,11 +64,9 @@ class Engine:
     def __init__(self, cfg: AppConfig, logger: logging.Logger | None = None) -> None:
         self.cfg = cfg
         self.log = logger or logging.getLogger("hd2coyote.engine")
-        self.grabber: ScreenGrabber | None = None
         self.hook: HookSource | None = None
         self.sources: list[Source] = []
         self._source_map: dict[str, Source] = {}
-        self.detector = Detector(cfg, self.log)
         self.rules = RuleEngine(cfg, self.log)
         self.ramp = PunishmentRamp(cfg.ramp)
         self.device: Device = create_device(cfg.device, on_event=self._on_device_event, logger=self.log)
@@ -87,7 +83,6 @@ class Engine:
         self._cur_a = 0.0
         self._cur_b = 0.0
         self._last_tick = 0.0
-        self._errors = 0
         self._focus_ok = True
         self._focus_checked = 0.0
 
@@ -114,9 +109,6 @@ class Engine:
             self.device.stop()
         except Exception as exc:
             self.log.error("设备停止异常：%s", exc)
-        if self.grabber is not None:
-            self.grabber.close()
-            self.grabber = None
         self._close_sources()
         self.status.running = False
         self.status.detecting = False
@@ -166,7 +158,6 @@ class Engine:
         self.rules = RuleEngine(cfg, self.log)
         self.safety.cfg = cfg.safety
         self.ramp.cfg = cfg.ramp
-        self.detector.apply_config(cfg)
         for src in list(self.sources):
             try:
                 src.apply_config(cfg)
@@ -185,10 +176,7 @@ class Engine:
     # ------------------------------------------------------------- 主循环
     def _run(self) -> None:
         try:
-            if self.cfg.source == "vision":
-                self._run_vision()
-            else:
-                self._run_sources()
+            self._run_sources()
         finally:
             self.status.detecting = False
             self._push_output(force_zero=True)
@@ -286,65 +274,6 @@ class Engine:
         if not self.sources:
             return "无"
         return "；".join(src.describe() for src in self.sources)
-
-    def _run_vision(self) -> None:
-        """屏幕识别路径（不需要装 mod，但需要标定 HUD）。"""
-        try:
-            self.grabber = ScreenGrabber(self.cfg.capture, self.log)
-        except CaptureError as exc:
-            self.status.last_error = str(exc)
-            self.log.error("抓屏初始化失败：%s", exc)
-            return
-        self.status.detecting = True
-        self._last_tick = time.monotonic()
-        interval = 1.0 / max(1.0, self.cfg.capture.fps)
-        while not self._stop.is_set():
-            t0 = time.monotonic()
-            try:
-                self._tick(t0)
-            except CaptureError as exc:
-                self._errors += 1
-                self.status.last_error = str(exc)
-                if self._errors >= self.cfg.detect.capture_error_limit:
-                    self.log.error("连续抓屏失败 %d 次，已停止检测：%s", self._errors, exc)
-                    self.trip("抓屏失败")
-                    break
-            except Exception as exc:  # 任何未预期异常都不允许留下输出
-                self.log.exception("引擎异常：%s", exc)
-                self.trip(f"引擎异常：{exc}")
-                break
-            spent = time.monotonic() - t0
-            time.sleep(max(0.0, interval - spent))
-
-    def _tick(self, now: float) -> None:
-        assert self.grabber is not None
-        region = self.cfg.hud.hp_bar
-        frame = self.grabber.grab(self._capture_region(region))
-        if is_black_frame(frame) and self._errors == 0:
-            self.log.warning("抓到全黑画面：若游戏是独占全屏，请改为「无边框窗口」")
-        self._errors = 0
-
-        for event in self.detector.process(frame, now):
-            self._handle_event(event, now)
-
-        self._advance_effects(now)
-        self._check_focus(now)
-        self._update_status(now)
-
-    def _capture_region(self, hp_box):
-        """抓屏区域 = 血条 + 图标区（+ 模板区）的并集，面积小、帧率高。"""
-        boxes = [b for b in (hp_box, self.detector.layout.injury_zone,
-                             self.detector.layout.death_probe) if b is not None and b.is_valid()]
-        if not boxes:
-            return None
-        x0 = min(b.x for b in boxes)
-        y0 = min(b.y for b in boxes)
-        x1 = max(b.x + b.w for b in boxes)
-        y1 = max(b.y + b.h for b in boxes)
-        pad = 8
-        from .config import Box
-
-        return Box(max(0, x0 - pad), max(0, y0 - pad), x1 - x0 + pad * 2, y1 - y0 + pad * 2)
 
     # ------------------------------------------------------------- 事件处理
     def _handle_event(self, event: Event, now: float) -> None:
@@ -457,19 +386,14 @@ class Engine:
                 self.events_log.append(event)
 
     def _update_status(self, now: float) -> None:
-        if self.cfg.source == "vision":
-            s = self.detector.sample
-            self.status.hp = s.hp
-            self.status.injury = list(s.injury)
-        else:
-            self.status.sources = [src.status().as_dict() for src in self.sources]
-            bridge = self._source_map.get("game_bridge")
-            state = getattr(bridge, "state", None)
-            if state is not None:
-                self.status.hp = state.hp
-                self.status.injury = [float(v) for v in state.limbs]
-            self.status.hook_alive = bool(getattr(bridge, "alive", False))
-            self.status.hook_detail = bridge.describe() if bridge is not None else "未启用游戏桥"
+        self.status.sources = [src.status().as_dict() for src in self.sources]
+        bridge = self._source_map.get("game_bridge")
+        state = getattr(bridge, "state", None)
+        if state is not None:
+            self.status.hp = state.hp
+            self.status.injury = [float(v) for v in state.limbs]
+        self.status.hook_alive = bool(getattr(bridge, "alive", False))
+        self.status.hook_detail = bridge.describe() if bridge is not None else "未启用游戏桥"
         self.ramp.note_hp(self.status.hp)
         self.status.ramp_pct = self.ramp.bonus()
         self.status.ramp_detail = self.ramp.describe()

@@ -5,6 +5,14 @@
 
 ---
 
+## 0.5.1
+
+- 删除截图/像素识别管线、HUD 标定、`calibrate` CLI 和旧界面相关入口。
+- 保留游戏桥 UDP、HTTP 事件源与共享伤害/肢体/阵亡状态机；Mock 模拟改为结构化状态输入。
+- 清理 NumPy、Pillow、MSS、DXcam 运行/打包依赖。
+- 旧视觉配置迁移为事件源模式，忽略截图区域与模板路径；保留设备、规则、安全设置和事件源开关。
+- Fluent 桌面功能与安全退出保持不变；提供更新后的独立 EXE。
+
 ## 0.5.0
 
 **参考 [DG-Lab-Punishment](https://github.com/YingXIAmour/DG-Lab-Punishment) 的四个改进：事件源插件化、波形库 + 网页波形编辑器、惩罚累积、检查更新。**

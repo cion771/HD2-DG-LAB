@@ -24,7 +24,7 @@
 -- 偏移是"某个游戏构建"的快照，游戏更新会漂移：先跑 recon，更新后重跑 recon。
 
 local ADDON = 'mods/hd2coyote/hd2_coyote_bridge'
-local VERSION = '0.5.0'   -- 必须与仓库根的 VERSION 文件一致（打包时会校验）
+local VERSION = '0.5.1'   -- 必须与仓库根的 VERSION 文件一致（打包时会校验）
 local PROTOCOL = 1
 
 --------------------------------------------------------------------- 配置

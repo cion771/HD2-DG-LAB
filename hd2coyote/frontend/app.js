@@ -79,7 +79,7 @@ function render(s) {
   text('ver','v' + c.version + ' · 本机服务'); text('footerVersion','v' + c.version);
   text('serviceStatus',c.running ? '检测中' : '待机'); text('serviceDetail','控制服务在线 · 仅本机界面'); $('serviceDot').className = 'status-dot';
   text('pollState','刚刚同步'); setBadge('sessionBadge',c.running ? '检测运行中' : '控制器待机',c.running ? 'good' : 'quiet');
-  const receiving = c.running && (c.source === 'vision' ? c.detecting : (c.sources || []).some(source => source.alive));
+  const receiving = c.running && (c.sources || []).some(source => source.alive);
   text('bridgeStatus',c.running ? (receiving ? '正在接收' : '等待数据') : '尚未检测');
   text('bridgeDetail',h.detail || '启动检测后等待游戏数据'); $('bridgeDot').className = 'status-dot' + (receiving ? '' : ' neutral');
   const mock = /mock/i.test(d.kind); text('deviceStatus',mock ? 'Mock 模拟' : d.connected ? '已连接' : '未连接');
@@ -94,7 +94,7 @@ function render(s) {
   text('limbs',hasData ? (c.limbs.map((x,i) => x ? ['左肢','躯干','右肢'][i] || '肢体' + i : '').filter(Boolean).join('、') || '未检测到损伤') : '等待有效数据');
   text('rampValue',c.ramp.enabled ? c.ramp.pct + '% / ' + c.ramp.ceiling_pct + '%' : '未启用');
   text('src',(c.sources || []).map(x => x.label + ' · ' + (x.alive ? '在线' : '等待')).join('；') || '尚未启动');
-  text('sourceBadge',c.source === 'vision' ? '屏幕识别' : '事件源');
+  text('sourceBadge','事件源');
   const key = d.qr_url || '';
   if (key !== qrKey) { qrKey = key; $('qrwrap').replaceChildren(); if (key) { const img = node('img'); img.alt = 'DG-LAB App 连接二维码，请勿分享'; img.src = '/qr.svg?t=' + Date.now(); img.onerror = () => { img.remove(); $('qrwrap').prepend(node('span','','二维码不可用，请检查设备服务。')); }; $('qrwrap').append(img,node('code','',key)); } }
   if (!key) $('qrwrap').replaceChildren(node('span','',mock ? 'Mock 模式无需扫码，也不会连接真实设备。' : '启动设备服务后，在这里显示连接二维码。'));

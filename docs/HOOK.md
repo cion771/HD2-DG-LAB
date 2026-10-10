@@ -15,20 +15,12 @@
 | "官方支持 mod / 有 mod API" | **没有。** Arrowhead 没有发布 HD2 的 mod API、SDK 或 Steam Workshop 支持。现有 mod 生态全部走社区工具链。 |
 | "直接 hook 游戏" | 在 HD2 里指的是：用社区加载器 **Bingus Shared Loader** 把一个 Lua 资源塞进游戏自带的 **LuaJIT** 虚拟机里，addon 与游戏共享同一个 Lua 状态和地址空间，于是可以用 **FFI 只读游戏内存**。 |
 | "内存 hook 会被反作弊封" | 游戏带 **nProtect GameGuard**。社区共识（也是本项目遵守的红线）：**进程内、只读**的 addon 目前被广泛使用（Enemy HP、G-60 Smart Targeting 等都在公开分发）；真正危险的是**从外部进程 OpenProcess + ReadProcessMemory**。本项目只做前者。 |
-| 你的环境 | 本机已装 Bingus Shared Loader **v18 / API 1**，加载器日志里有 **21 个 addon**（`%LOCALAPPDATA%\CowboyBingus\Helldivers2\Logs\BingusSharedLoader.log`）。所以这条路对你是可用的。 |
 
-## 2. 两条路线的取舍
+## 2. 状态来源
 
-| | 游戏内 Hook（本项目默认） | 屏幕识别（保留为可选） |
-|---|---|---|
-| 延迟 | 10Hz 状态流，事件几乎实时 | 抓屏 15fps + 像素判读 |
-| 精度 | 直接读血量/损伤位，无歧义 | 依赖血条像素、图标颜色，有误差 |
-| 标定 | 不需要；需要一次 recon 定位偏移 | 必须标定 HUD，改分辨率/HUD 缩放要重标 |
-| 抗更新 | 游戏更新会漂移偏移（需重跑 recon） | 游戏改 HUD 也要重标 |
-| 进程接触 | 在游戏进程内读内存（社区惯例） | 完全不碰游戏进程 |
-| 反作弊 | 社区在用，但非官方保证 | 零接触 |
+0.5.1 起已移除截图、像素识别与 HUD 标定。控制器仅接收结构化状态/事件：默认 `game_bridge`（本机 UDP），可选 `http`，由 `sources.enabled` 配置。旧 `source = "vision"` 配置读取时迁移为事件源模式。
 
-配置里 `source` 一项切换：`"hook"`（默认）或 `"vision"`。
+游戏桥无需屏幕标定，但仍需要确认当前游戏构建的字段偏移（先 recon 再 live）；游戏更新后必须重新核验，不能保证反作弊兼容或账号安全。
 
 ## 3. 数据链路
 

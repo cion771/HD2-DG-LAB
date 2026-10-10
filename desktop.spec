@@ -9,7 +9,7 @@ for name in ("LICENSE", "THIRD_PARTY.md", "SAFETY.md", "VERSION"):
     datas.append((str(root / name), "."))
 datas.append((str(root / "docs" / "DESKTOP.md"), "docs"))
 # Wheel metadata includes license texts (including bundled native libraries).
-for package in ("pywebview", "numpy", "mss", "Pillow", "websockets", "qrcode", "pyinstaller"):
+for package in ("pywebview", "websockets", "qrcode", "pyinstaller"):
     datas.extend(copy_metadata(package, recursive=True))
 python_license = Path(sys.base_prefix) / "LICENSE.txt"
 if not python_license.is_file():
@@ -21,7 +21,7 @@ a = Analysis(
     binaries=[], datas=datas,
     hiddenimports=["webview.platforms.edgechromium", "qrcode.image.svg"],
     hookspath=[], hooksconfig={}, runtime_hooks=[],
-    excludes=["pytest", "tkinter", "hd2coyote.ui", "hd2coyote.__main__"],
+    excludes=["numpy", "mss", "PIL", "dxcam", "hd2coyote.capture", "hd2coyote.hud", "pytest", "tkinter", "hd2coyote.ui", "hd2coyote.__main__"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

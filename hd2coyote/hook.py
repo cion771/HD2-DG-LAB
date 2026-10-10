@@ -196,7 +196,7 @@ class HookSource:
         death_score = 1.0 if dead else 0.0
         return self.trackers.process(hp, scores, 1.0 if bleeding else 0.0,
                                      death_score, now,
-                                     threshold=self.cfg.detect.death_template_threshold,
+                                     threshold=self.cfg.detect.death_state_threshold,
                                      names=self.cfg.hud.injury_slot_names)
 
     # ------------------------------------------------------------- 展示

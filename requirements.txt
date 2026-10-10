@@ -1,9 +1,3 @@
-# 必需
-numpy>=1.24          # 像素分析
-mss>=9.0             # 抓屏（GDI，跨平台兜底）
-websockets>=12.0     # DG-LAB Socket 协议（WebSocket 服务端）
-pillow>=10.0         # 模板图读写 / 标定向导显示截图
-qrcode>=7.4          # 生成手机扫码用的二维码（缺失时可手输地址）
-
-# 可选（装了更快：DXGI 抓屏，Windows 专属）
-# dxcam>=0.0.5
+# 控制服务与二维码；无截图、像素识别依赖
+websockets>=12.0
+qrcode>=7.4

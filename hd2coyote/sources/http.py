@@ -292,7 +292,7 @@ class HttpEventSource(Source):
         return self.trackers.process(
             hp, scores, 1.0 if truthy(payload.get("bleeding")) else 0.0,
             1.0 if dead else 0.0, now,
-            threshold=self.cfg.detect.death_template_threshold,
+            threshold=self.cfg.detect.death_state_threshold,
             names=self.cfg.hud.injury_slot_names,
         )
 

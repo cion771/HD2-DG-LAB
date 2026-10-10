@@ -13,7 +13,7 @@ if not defined PY (
     if errorlevel 1 goto fail
     set "PY=.venv\Scripts\python.exe"
 )
-"%PY%" -c "import webview, clr, numpy, mss, websockets, PIL, qrcode" >nul 2>&1
+"%PY%" -c "import webview, clr, websockets, qrcode" >nul 2>&1
 if errorlevel 1 (
     "%PY%" -m pip install -r requirements-desktop.txt
     if errorlevel 1 goto fail

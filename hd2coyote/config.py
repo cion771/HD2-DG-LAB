@@ -1,7 +1,7 @@
 """配置模型与读写。
 
 全部配置集中在一个 JSON 文件里（默认 config.json），
-UI、CLI、标定向导都读写同一个 AppConfig。
+UI、CLI都读写同一个 AppConfig。
 """
 
 from __future__ import annotations
@@ -10,22 +10,6 @@ import json
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Literal
-
-
-@dataclass
-class Box:
-    """屏幕上的矩形区域（像素，屏幕绝对坐标）。"""
-
-    x: int = 0
-    y: int = 0
-    w: int = 0
-    h: int = 0
-
-    def is_valid(self) -> bool:
-        return self.w > 1 and self.h > 1
-
-    def as_tuple(self) -> tuple[int, int, int, int]:
-        return (self.x, self.y, self.w, self.h)
 
 
 @dataclass
@@ -66,25 +50,11 @@ class SourcesConfig:
 
 
 @dataclass
-class CaptureConfig:
-    """抓屏配置（仅在 source = vision 时使用）。"""
-
-    monitor: int = 1  # mss 显示器编号，1 = 主屏
-    region: Box | None = None  # None = 整屏（标定时用整屏）
-    fps: float = 15.0
-    backend: Literal["auto", "dxcam", "mss", "pil"] = "auto"
-
-
-@dataclass
 class HudConfig:
-    """HUD 区域。坐标由标定向导写入，默认值仅作 16:9 的粗略参考。"""
+    """桥接肢体状态配置；沿用 hud 键兼容旧配置。"""
 
-    hp_bar: Box | None = None
-    injury_zone: Box | None = None  # 损伤图标条（血条左侧）
-    injury_slots: int = 3  # 把图标条横向分成几格
+    injury_slots: int = 3  # 上报的肢体槽位数
     injury_slot_names: list[str] = field(default_factory=lambda: ["左肢", "躯干", "右肢"])
-    death_probe: Box | None = None  # 阵亡判定用的模板区域（可选）
-    death_template: str = ""  # 模板 PNG 路径（可选，优先级高于 death_probe）
 
 
 @dataclass
@@ -94,13 +64,12 @@ class DetectConfig:
     damage_min_pct: float = 4.0  # 单次掉血超过最大血量的百分之几才算一次伤害
     low_health_pct: float = 35.0  # 低于该血量进入低血量状态
     recover_pct: float = 60.0  # 回升到该血量解除低血量状态
-    dead_hold_s: float = 0.8  # 血条空持续多久判定为阵亡
+    dead_hold_s: float = 0.8  # 血量为零持续多久判定为阵亡
     revive_ignore_damage_s: float = 2.0  # 复活后忽略伤害的时间（重生动画期间）
-    injury_min_fraction: float = 0.015  # 图标格内橙红色像素占比阈值
-    injury_clear_s: float = 0.5  # 图标消失多久后才允许再次触发（防抖）
-    bleeding_min_fraction: float = 0.01
-    death_template_threshold: float = 0.72  # 模板匹配相似度阈值
-    capture_error_limit: int = 30  # 连续抓屏失败多少次自动停止
+    injury_min_fraction: float = 0.015  # 肢体状态阈值（桥上报 0/1）
+    injury_clear_s: float = 0.5  # 损伤解除多久后才允许再次触发（防抖）
+    bleeding_min_fraction: float = 0.01  # 流血状态阈值（桥上报 0/1）
+    death_state_threshold: float = 0.72  # 阵亡状态阈值（桥上报 0/1）
 
 
 @dataclass
@@ -197,12 +166,11 @@ class SafetyConfig:
 class AppConfig:
     """根配置。"""
 
-    #: 状态来源：hook = 游戏内 Lua addon（推荐）；vision = 屏幕识别（备用/无需装 mod）
-    source: Literal["hook", "vision"] = "hook"
+    #: 兼容旧配置；启用的事件源由 sources.enabled 决定。
+    source: Literal["hook"] = "hook"
     device: DeviceConfig = field(default_factory=DeviceConfig)
     hook: HookConfig = field(default_factory=HookConfig)
     sources: SourcesConfig = field(default_factory=SourcesConfig)
-    capture: CaptureConfig = field(default_factory=CaptureConfig)
     hud: HudConfig = field(default_factory=HudConfig)
     detect: DetectConfig = field(default_factory=DetectConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
@@ -231,6 +199,10 @@ class AppConfig:
     )
     log_level: str = "INFO"
 
+    def __post_init__(self) -> None:
+        # 旧 vision 配置不再抓屏，安全迁移为事件源模式。
+        self.source = "hook"
+
     # ------------------------------------------------------------------ IO
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -256,7 +228,6 @@ NESTED_TYPES: dict[str, type] = {
     "device": DeviceConfig,
     "hook": HookConfig,
     "sources": SourcesConfig,
-    "capture": CaptureConfig,
     "hud": HudConfig,
     "detect": DetectConfig,
     "safety": SafetyConfig,
@@ -265,15 +236,12 @@ NESTED_TYPES: dict[str, type] = {
     "update": UpdateConfig,
 }
 
-BOX_FIELDS = {"hp_bar", "injury_zone", "death_probe", "region"}
 
 
 def from_dict(cls: type, data: dict[str, Any]) -> Any:
-    """把 dict 还原为 dataclass（含嵌套 dataclass / Box / rules / 波形库），忽略未知键。"""
+    """把 dict 还原为 dataclass（含嵌套 dataclass / rules / 波形库），忽略未知键。"""
     if data is None:
         return None
-    if cls is Box:
-        return Box(**{k: int(v) for k, v in data.items() if k in {"x", "y", "w", "h"}})
     if cls is RuleConfig:
         known = {f.name for f in fields(RuleConfig)}
         return RuleConfig(**{k: v for k, v in data.items() if k in known})
@@ -295,6 +263,9 @@ def from_dict(cls: type, data: dict[str, Any]) -> Any:
         return WaveLibConfig(entries={
             str(k): from_dict(WaveEntry, v) for k, v in entries.items() if isinstance(v, dict)
         })
+    if cls is DetectConfig and "death_template_threshold" in data:
+        data = dict(data)
+        data.setdefault("death_state_threshold", data["death_template_threshold"])
     if not is_dataclass(cls):
         return data
     out = {}
@@ -306,8 +277,6 @@ def from_dict(cls: type, data: dict[str, Any]) -> Any:
             out[f.name] = from_dict(NESTED_TYPES[f.name], v)
         elif f.name == "rules":
             out[f.name] = {k: from_dict(RuleConfig, vv) for k, vv in (v or {}).items()}
-        elif f.name in BOX_FIELDS:
-            out[f.name] = None if v is None else from_dict(Box, v)
         elif f.name == "enabled" and cls is SourcesConfig:
             # 事件源列表：只收字符串，空列表回退到默认（别把控制器变成聋子）
             items = [str(x) for x in v] if isinstance(v, (list, tuple)) else []

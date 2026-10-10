@@ -2,8 +2,7 @@
 
     python -m hd2coyote ui            图形界面（推荐）
     python -m hd2coyote run           纯命令行运行（Ctrl+C 退出）
-    python -m hd2coyote simulate      无游戏自测（合成 HUD 画面）
-    python -m hd2coyote calibrate     标定血条 / 损伤区
+    python -m hd2coyote simulate      无游戏自测（合成状态）
     python -m hd2coyote doctor        环境自检
     python -m hd2coyote test-pulse    手动测试一发（受安全上限约束）
     python -m hd2coyote waves [名称]   查看内置波形
@@ -20,10 +19,10 @@ import time
 from pathlib import Path
 
 from . import __version__
-from .config import AppConfig, CaptureConfig
+from .config import AppConfig
 from .waves import PRESETS, build
 
-# engine / safety 是重依赖（engine 要 numpy，safety 经 device 要 websockets），
+# engine / safety 是重依赖（设备连接需要 websockets），
 # 而 `stop` 这种命令完全用不到它们 —— 所以在函数内部按需导入，
 # 这样"关掉控制器"永远不依赖游戏识别/设备栈是否装好。
 
@@ -115,12 +114,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     if cfg.device.kind == "socket":
         dev = engine.device
         print(f"\n请用 DG-LAB App 扫描二维码（或手输）：\n  {getattr(dev, 'qr_payload', '')}\n")
-    if cfg.source == "hook":
-        print(f"状态来源：游戏内 Lua 桥（UDP {cfg.hook.host}:{cfg.hook.port}）")
-        print("  安装：见 docs/HOOK.md —— 需要 Bingus Shared Loader v15+ 与 lua/hd2_coyote_bridge.lua")
-        print("  自检：python -m hd2coyote doctor")
-    else:
-        print("状态来源：屏幕识别（需要先在界面里标定 HUD）")
+    print(f"状态来源：游戏内 Lua 桥（UDP {cfg.hook.host}:{cfg.hook.port}）")
+    print("  安装：见 docs/HOOK.md —— 需要 Bingus Shared Loader v15+ 与 lua/hd2_coyote_bridge.lua")
+    print("  自检：python -m hd2coyote doctor")
     print(f"事件源  ：{'、'.join(cfg.sources.enabled)}")
     if "http" in cfg.sources.enabled:
         token = "（需要 X-HD2Coyote-Token）" if cfg.sources.http_token else ""
@@ -143,7 +139,7 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     from .simulate import run_demo
 
     cfg = load_config(args.config)
-    cfg.source = "vision"  # 合成画面走视觉链路
+    cfg.source = "hook"  # 合成结构化状态，不抓屏
     cfg.device.kind = "mock" if args.mock else cfg.device.kind
     if args.socket:
         cfg.device.kind = "socket"
@@ -157,26 +153,18 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_calibrate(args: argparse.Namespace) -> int:
-    cfg = load_config(args.config)
-    from .ui import run_calibration
-
-    run_calibration(cfg, Path(args.config))
-    return 0
-
-
 def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"hd2-coyote {__version__}")
     print(f"Python      : {sys.version.split()[0]}")
     print(f"配置文件    : {Path(args.config).resolve()} 存在={Path(args.config).exists()}")
-    for mod in ("numpy", "mss", "PIL", "websockets", "qrcode", "dxcam", "tkinter"):
+    for mod in ("websockets", "qrcode", "tkinter"):
         try:
             __import__(mod)
             print(f"依赖 {mod:<12}: OK")
         except Exception as exc:
             print(f"依赖 {mod:<12}: 缺失（{exc}）")
     cfg = AppConfig.load(args.config)
-    print(f"状态来源    : {cfg.source}（hook = 游戏内 Lua 桥；vision = 屏幕识别）")
+    print(f"状态来源    : {cfg.source}（结构化事件源，不抓屏）")
     from .sources import source_catalog
 
     names = [item["name"] for item in source_catalog()]
@@ -211,21 +199,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     else:
         print("加载器      : 未找到 BingusSharedLoader.log（没装社区加载器 → hook 路线不可用）")
 
-    try:
-        from .capture import ScreenGrabber
-
-        grab = ScreenGrabber(CaptureConfig(monitor=cfg.capture.monitor,
-                                           backend=cfg.capture.backend))
-        frame = grab.full_frame()
-        print(f"抓屏后端    : {grab.backend} 画面 {frame.shape[1]}x{frame.shape[0]} "
-              f"平均亮度 {frame.mean():.1f}")
-        grab.close()
-        print("提示        : 游戏请用「无边框窗口」；独占全屏可能导致黑屏")
-    except Exception as exc:
-        print(f"抓屏        : 失败（{exc}）")
-    print(f"血条已标定  : {bool(cfg.hud.hp_bar and cfg.hud.hp_bar.is_valid())}")
     print(f"安全上限    : max_pct={cfg.safety.max_pct}% max_absolute={cfg.safety.max_absolute}")
-    print("说明        : 本程序只读屏幕像素，不注入游戏、不读写游戏内存")
+    print("说明        : 本程序接收游戏桥/HTTP 上报；游戏桥限制与风险见 docs/HOOK.md")
     return 0
 
 
@@ -325,9 +300,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--socket", action="store_true", help="真的连 App 输出")
     p.add_argument("--seconds", type=float, default=0.0)
     p.set_defaults(func=cmd_simulate)
-
-    p = sub.add_parser("calibrate", parents=[common], help="标定 HUD 区域")
-    p.set_defaults(func=cmd_calibrate)
 
     p = sub.add_parser("doctor", parents=[common], help="环境自检")
     p.set_defaults(func=cmd_doctor)

@@ -28,10 +28,12 @@ EXE 包含 Python 及第三方运行库，各组件保留各自许可，不因�
 |---|---|
 | CPython | PSF 及随附第三方声明；嵌入式 Python 运行时 |
 | pywebview / pythonnet / clr-loader | BSD-3-Clause / MIT / MIT；原生 Windows 窗口与 .NET 互操作 |
-| NumPy / Pillow / MSS / websockets / qrcode | 各自 BSD / MIT / HPND 系列许可，详见随包元数据；计算、图像、捕获、协议及二维码 |
+| websockets / qrcode | BSD-3-Clause 系列许可，详见随包元数据；设备协议与二维码 |
 | bottle / proxy-tools / cffi / pycparser / typing-extensions | 各自 MIT / BSD / PSF 系列许可；间接运行依赖 |
 | Microsoft WebView2 SDK | Microsoft 许可；pywebview 附带的桥接程序集。WebView2 Runtime 需单独安装，遵循 Microsoft 条款 |
 | PyInstaller | GPL-2.0-or-later 附带 bootloader 分发例外；只用于构建，不改变本项目许可 |
+
+0.5.1 起不再依赖或打包 NumPy、Pillow、MSS、DXcam；二维码使用 SVG / 网格绘制，不做图像识别。
 
 ## 未随仓库分发的内容
 
