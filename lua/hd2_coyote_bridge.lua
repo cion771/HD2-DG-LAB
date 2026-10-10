@@ -24,7 +24,7 @@
 -- 偏移是"某个游戏构建"的快照，游戏更新会漂移：先跑 recon，更新后重跑 recon。
 
 local ADDON = 'mods/hd2coyote/hd2_coyote_bridge'
-local VERSION = '0.5.2'   -- 必须与仓库根的 VERSION 文件一致（打包时会校验）
+local VERSION = '0.5.3'   -- 必须与仓库根的 VERSION 文件一致（打包时会校验）
 local PROTOCOL = 1
 
 --------------------------------------------------------------------- 配置
@@ -36,7 +36,7 @@ local CONFIG = {
     --   'recon' = 再加一次性内存侦察（偏移未验证时用这个）
     --   'live'  = 按偏移实时读状态并上报
     mode = 'safe',
-    enabled = true,            -- 游戏内菜单的总开关（live/recon 时才有效）
+    enabled = true,            -- 文件配置的上报开关（live/recon 时才有效）
     host = '127.0.0.1',
     port = 47777,
     interval = 0.10,           -- 状态上报间隔（秒）
@@ -97,6 +97,19 @@ local function file_write(path, text, append)
     return true
 end
 
+-- 固定长度内存日志，不从磁盘回读，也不在每帧读写日志文件。
+local RECENT_LOG_LIMIT = 6
+local recent_logs = {}
+local function short_text(value, limit)
+    local text = tostring(value):gsub('[%c]', ' ')
+    local count = 0
+    for pos in text:gmatch('()[%z\1-\127\194-\244][\128-\191]*') do
+        count = count + 1
+        if count > limit then return text:sub(1, pos - 1) .. '…' end
+    end
+    return text
+end
+
 local log_lines = 0
 local LOG_HANDLE = nil      -- 优先用加载器给的日志句柄（它保证这个目录可用）
 
@@ -105,6 +118,8 @@ local function log(msg, force)
     if log_lines > 500 and not force then return end
     log_lines = log_lines + 1
     local line = string.format('[%s][%s] %s\n', os.date('%H:%M:%S'), ADDON, tostring(msg))
+    recent_logs[#recent_logs + 1] = short_text('[' .. os.date('%H:%M:%S') .. '] ' .. tostring(msg), 350)
+    if #recent_logs > RECENT_LOG_LIMIT then table.remove(recent_logs, 1) end
     local wrote = false
     if LOG_HANDLE then
         local ok = pcall(LOG_HANDLE.write, LOG_HANDLE, line)
@@ -471,6 +486,7 @@ local function send(text)
         local n = WS2.Hd2Coyote_sendto(net.sock, text, #text, 0, net.sockaddr, net.sockaddr_len)
         if n == nil or tonumber(n) < 0 then error('sendto 失败') end
     end)
+    net.last_ok = ok
     if ok then net.sent = net.sent + 1 else net.failed = net.failed + 1 end
     return ok
 end
@@ -567,7 +583,7 @@ local function read_state(R, P, player)
                     limbs[i] = (math.floor(mask / bit) % 2 == 1) and 1 or 0
                 end
             else
-                -- 掩码 + 起始位（游戏内菜单里可调）：bit(shift+i-1) -> 第 i 个槽位
+                -- 掩码 + 起始位（通过桥配置调整）：bit(shift+i-1) -> 第 i 个槽位
                 local m = math.floor(mask / 2 ^ (P.limb_shift or 0))
                 for i = 1, 3 do
                     limbs[i] = (math.floor(m / 2 ^ (i - 1)) % 2 == 1) and 1 or 0
@@ -656,28 +672,17 @@ local function recon(R, P, base, player)
     return player ~= nil
 end
 
---------------------------------------------------------------------- 游戏内设置界面
--- 前向声明：菜单回调要用到后面才定义的东西
-local set_mode, install_frame_hook, HOOK
+--------------------------------------------------------------------- 游戏内连接信息与日志
+-- 前向声明：连接信息展示使用帧钩子状态。
+local install_frame_hook, HOOK
 
--- 用社区的 Mod Options Menu（全局 ModOptionsMenu，api=1）在 ESC 菜单的 MODS 页里加一个分类。
--- API 见 https://github.com/CowboyBingus/ModOptionsMenu 的 README（0BSD 许可）：
---   register_option(id, spec) -> true | false, 原因
---   get(id) / set(id, value) / on_change(id, fn(value, id)) / ready()
---   spec: type(toggle|choice|slider) / label / mod / mod_id / default / description
---         choice: choices(2~16 项，每项 ≤48 字符)  slider: min/max/step
---   上限：112 个 mod 分类（每次显示 7 个）、每个 mod 32 个选项；选项注册后不能取消。
---   文本支持函数（api version ≥2，跟随游戏语言）；这里用「中文 English」双语字符串，
---   在所有版本、所有语言下都能用。
+-- ModOptionsMenu api=1 没有纯文本/禁用行。用相同的两个选择文字承载信息，
+-- 不读取持久化值，也不注册任何配置修改回调；不调用 set 干扰共享保存计时。
+-- version >=2 的动态文本在重新打开 ESC 菜单时刷新，不冒充实时连接确认。
 local MENU = {
-    mod_id = 'hd2coyote',
-    display = 'HD2 COYOTE 郊狼',
-    registered = false,
-    gave_up = false,
-    attempts = 0,
-    version = 0,
-    hook_choices = { 'update' },
-    specs = {},
+    mod_id = 'hd2coyote', display = 'HD2 COYOTE 郊狼',
+    registered = false, gave_up = false, attempts = 0, version = 0,
+    specs = {}, ids = {},
 }
 
 local function menu()
@@ -686,162 +691,71 @@ local function menu()
     return m
 end
 
-local function opt_id(suffix) return MENU.mod_id .. '.' .. suffix end
+local function opt_id(suffix) return MENU.mod_id .. '.info.' .. suffix end
 
-local function offset_or_nil(value)
-    local v = tonumber(value)
-    if not v or v < 0 then return nil end
-    return math.floor(v + 0.5)
-end
-
--- 每帧钩子候选：在 _G 里找 update/tick 之类的函数名。
--- 官方第三方参考写明"CowboyBingus 的 mod 普遍包装全局 update"，所以 update 排第一。
-local function collect_hook_choices()
-    local names, seen = { 'update' }, { update = true }
-    local count = 0
-    pcall(function()
-        for k, v in pairs(_G) do
-            count = count + 1
-            if count > 400 then break end
-            if type(k) == 'string' and type(v) == 'function' and not seen[k] then
-                if k:lower():find('update') or k:lower():find('tick') or k:lower():find('frame') then
-                    seen[k] = true
-                    names[#names + 1] = k
-                end
-            end
-        end
-    end)
-    table.sort(names, function(a, b)
-        if a == 'update' then return true end
-        if b == 'update' then return false end
-        return a < b
-    end)
-    while #names > 15 do table.remove(names) end
-    names[#names + 1] = 'none'  -- 允许显式不挂钩子（选项上限 16 项）
-    return names
-end
-
-local function hook_choice_index(names)
-    local want = CONFIG.frame_hooks[1]
-    for i, name in ipairs(names) do
-        if name == want then return i end
-    end
-    return 1
-end
-
--- 玩家按 APPLY 后调用：把菜单值写进 CONFIG / PROFILES（立即生效，不用重启）
-local function apply_option(suffix, value)
-    local P = PROFILES[CONFIG.profile]
-    if suffix == 'enabled' then
-        CONFIG.enabled = value and true or false
-        log('菜单：上报 ' .. (CONFIG.enabled and '开启' or '关闭'))
-    elseif suffix == 'mode' then
-        set_mode(tonumber(value) == 2 and 'live' or 'recon')
-    elseif suffix == 'port' then
-        local port = math.floor((tonumber(value) or CONFIG.port) + 0.5)
-        if port ~= CONFIG.port then
-            CONFIG.port = port
-            net.ready = false          -- 端口变了要重开 socket
-            init_net()
-            log('菜单：UDP 端口 -> ' .. port .. '（控制器也要改成同一个端口）')
-        end
-    elseif suffix == 'interval' then
-        CONFIG.interval = math.max(0.02, tonumber(value) or CONFIG.interval)
-    elseif suffix == 'hp_offset' and P then
-        P.hp = offset_or_nil(value)
-    elseif suffix == 'hp_max_offset' and P then
-        P.hp_max = offset_or_nil(value)
-    elseif suffix == 'limb_offset' and P then
-        P.limb_mask = offset_or_nil(value)
-    elseif suffix == 'limb_shift' and P then
-        P.limb_shift = math.max(0, math.floor((tonumber(value) or 0) + 0.5))
-        P.limb_mask_bits = nil
-    elseif suffix == 'dead_offset' and P then
-        P.dead = offset_or_nil(value)
-    elseif suffix == 'hook' then
-        local name = MENU.hook_choices[math.floor((tonumber(value) or 1) + 0.5)] or 'update'
-        CONFIG.frame_hooks = { name }
-        if name == 'none' then
-            live.active = false
-            status(false, '每帧钩子已关闭（Frame Hook = none）：不再上报状态')
-        else
-            install_frame_hook()
-        end
-    else
-        log('菜单：忽略未知选项 ' .. tostring(suffix))
-    end
+local function menu_text(fn)
+    if MENU.version >= 2 then return fn end
+    return '请升级 Mod Options Menu v1.1+；状态与日志请在桌面端查看。'
 end
 
 local function build_menu_specs()
-    local P = PROFILES[CONFIG.profile] or {}
-    MENU.hook_choices = collect_hook_choices()
     MENU.specs = {
-        { suffix = 'enabled', type = 'toggle', label = '启用上报 Enabled', default = CONFIG.enabled,
-          desc = '关闭后桥不再发状态；控制器会因为断流自动静音。' },
-        { suffix = 'mode', type = 'choice', label = '模式 Mode',
-          choices = { '侦察 Recon', '运行 Live' },
-          default = (CONFIG.mode == 'live') and 2 or 1,
-          desc = '侦察：只做一次定位并把证据写进 recon_report.txt；运行：按偏移实时上报。' },
-        { suffix = 'port', type = 'slider', label = 'UDP 端口 Port', min = 1024, max = 65535, step = 1,
-          default = CONFIG.port,
-          desc = '必须与控制器 config.json 里的 hook.port 一致（默认 47777）。' },
-        { suffix = 'interval', type = 'slider', label = '上报间隔(秒) Interval', min = 0.05, max = 1,
-          step = 0.05, default = CONFIG.interval,
-          desc = '越小越灵敏，越大越省。默认 0.1 秒。' },
-        { suffix = 'hp_offset', type = 'slider', label = '血量偏移 HP Offset', min = -1, max = 65535,
-          step = 1, default = P.hp or -1,
-          desc = '-1 = 未设置。相对「本地玩家锚点」的偏移，recon 之后填。' },
-        { suffix = 'hp_max_offset', type = 'slider', label = '血量上限偏移 HP Max', min = -1,
-          max = 65535, step = 1, default = P.hp_max or -1,
-          desc = '-1 = 未设置（缺省按 100 处理）。' },
-        { suffix = 'limb_offset', type = 'slider', label = '肢体掩码偏移 Limb Mask', min = -1,
-          max = 65535, step = 1, default = P.limb_mask or -1,
-          desc = '-1 = 未设置。读 1 字节，按位表示各部位是否受伤。' },
-        { suffix = 'limb_shift', type = 'slider', label = '肢体起始位 Limb Shift', min = 0, max = 7,
-          step = 1, default = P.limb_shift or 0,
-          desc = '掩码里从第几位开始对应「左肢/躯干/右肢」。默认 0。' },
-        { suffix = 'dead_offset', type = 'slider', label = '阵亡标志偏移 Dead', min = -1, max = 65535,
-          step = 1, default = P.dead or -1,
-          desc = '-1 = 未设置（只用血量判阵亡）。' },
-        { suffix = 'hook', type = 'choice', label = '每帧钩子 Frame Hook',
-          choices = MENU.hook_choices, default = hook_choice_index(MENU.hook_choices),
-          desc = '包装哪个全局函数来拿每帧回调（默认 update）。选 none 则不挂钩子。', gap = true },
+        { suffix = 'endpoint', label = '连接目标 Endpoint', text = function()
+            return 'UDP → ' .. tostring(CONFIG.host) .. ':' .. tostring(CONFIG.port)
+                .. '；单向上报，无法确认桌面端接收或 DG-LAB 设备连接。'
+        end },
+        { suffix = 'transport', label = '本地发送状态 Transport', text = function()
+            if not net.ready then return 'UDP 未就绪；请检查桌面端诊断与桥日志。' end
+            if net.last_ok == false then return '最近一次发送失败；不代表设备状态。' end
+            if net.last_ok == true then return '最近一次 UDP 已交给本机网络栈；对端接收未确认。' end
+            return 'UDP 本地已就绪，尚未发送；对端接收未确认。'
+        end },
+        { suffix = 'packets', label = '发送统计 Packets', text = function()
+            return string.format('本次会话：发送成功 %d / 失败 %d。成功仅指本地 sendto 返回成功。',
+                                 net.sent, net.failed)
+        end },
+        { suffix = 'bridge', label = '桥接信息 Bridge', text = function()
+            return 'v' .. VERSION .. ' / mode=' .. tostring(CONFIG.mode)
+                .. ' / profile=' .. tostring(CONFIG.profile)
+                .. ' / 上报开关=' .. (CONFIG.enabled and '开' or '关')
+                .. ' / hook=' .. tostring(HOOK and HOOK.name or '未挂载')
+                .. '。配置请在桌面端修改后重启游戏。'
+        end },
     }
+    for i = 1, RECENT_LOG_LIMIT do
+        local slot = i
+        MENU.specs[#MENU.specs + 1] = {
+            suffix = 'log' .. slot, label = '最近日志 ' .. slot .. '（最新在前）', gap = slot == 1,
+            text = function() return recent_logs[#recent_logs - slot + 1] or '暂无日志' end,
+        }
+    end
 end
 
 local function register_options(m)
     build_menu_specs()
     local failed = {}
     for _, opt in ipairs(MENU.specs) do
+        local summary = MENU.version >= 2 and function() return short_text(opt.text(), 40) end
+            or '请升级菜单 / 查看说明'
         local spec = {
-            type = opt.type, label = opt.label, mod = MENU.display, mod_id = MENU.mod_id,
-            default = opt.default,
+            type = 'choice', label = opt.label, mod = MENU.display, mod_id = MENU.mod_id,
+            default = 1, choices = { summary, summary }, gap = opt.gap,
+            description = menu_text(function()
+                return short_text(opt.text() .. '（重新打开 ESC 刷新）', 390)
+            end),
         }
-        if opt.desc then spec.description = opt.desc end
-        if opt.gap then spec.gap = true end
-        if opt.type == 'choice' then spec.choices = opt.choices end
-        if opt.type == 'slider' then spec.min, spec.max, spec.step = opt.min, opt.max, opt.step end
-        local ok, why = m.register_option(opt_id(opt.suffix), spec)
+        local id = opt_id(opt.suffix)
+        local ok, why = m.register_option(id, spec)
         if not ok then
             failed[#failed + 1] = opt.suffix .. '(' .. tostring(why) .. ')'
         else
-            -- 注册成功后立刻拿到"已应用值"（没存过就是 default），保证和文件配置一致
-            local ok_get, value = pcall(m.get, opt_id(opt.suffix))
-            if ok_get and value ~= nil then
-                pcall(apply_option, opt.suffix, value)
-            end
-            pcall(m.on_change, opt_id(opt.suffix), function(value)
-                local ok_apply, err = pcall(apply_option, opt.suffix, value)
-                if not ok_apply then log('菜单回调异常：' .. tostring(err)) end
-            end)
+            MENU.ids[#MENU.ids + 1] = id
         end
     end
     MENU.registered = true
-    if #failed > 0 then
-        log('菜单：部分选项注册失败 -> ' .. table.concat(failed, ','))
-    end
-    log(string.format('菜单：已注册 %d 个选项（menu version=%s）',
-                      #MENU.specs - #failed, tostring(MENU.version)))
+    if #failed > 0 then log('菜单：部分信息注册失败 -> ' .. table.concat(failed, ',')) end
+    log(string.format('菜单：已注册 %d 个只读信息行（menu version=%s）',
+                      #MENU.ids, tostring(MENU.version)))
     return #failed == 0
 end
 
@@ -912,7 +826,7 @@ local function start_live()
         return false
     end
     if not P.hp then
-        status(false, 'live 模式缺少 hp 偏移：先在菜单里填 HP Offset，或跑一次侦察')
+        status(false, 'live 模式缺少 hp 偏移：请在桌面端填 HP Offset 并重启游戏，或跑一次侦察')
         return false
     end
     live.base = live.base or module_base()
@@ -922,7 +836,7 @@ local function start_live()
     end
     if not HOOK.installed then
         status(false, '找不到每帧钩子：CONFIG.frame_hooks 里没有真实存在的全局函数；'
-            .. '候选见 recon_report.txt 的 globals_functions，或在游戏内菜单里选 Frame Hook')
+            .. '候选见 recon_report.txt 的 globals_functions，请在 bridge_config.lua 中设置 frame_hooks 并重启游戏')
         return false
     end
     live.R = live.R or reader(live.base)
@@ -936,22 +850,6 @@ local function start_live()
     status(true, string.format('live 已启动（profile=%s hook=%s hp=0x%X）',
                                CONFIG.profile, tostring(HOOK.name or '?'), P.hp))
     return true
-end
-
-function set_mode(mode)
-    local target = (mode == 'live') and 'live' or 'recon'
-    if CONFIG.mode == target and (target == 'recon' or live.active) then return end
-    CONFIG.mode = target
-    log('菜单：模式 -> ' .. target)
-    if target == 'live' then
-        start_live()
-    else
-        live.active = false
-        local P = PROFILES[CONFIG.profile]
-        if live.R and P then
-            pcall(recon, live.R, P, live.base or module_base(), live.player)
-        end
-    end
 end
 
 --------------------------------------------------------------------- 每帧钩子
@@ -1087,7 +985,7 @@ local function main()
         local found = recon(R, P, base, player)
         local detail
         if found then
-            detail = 'recon 完成：请在游戏内菜单里填血量偏移（或把 recon_report.txt 发回）'
+            detail = 'recon 完成：请在桌面端填写血量偏移并重启游戏'
         else
             -- 把具体原因写进 STATUS：用户第一眼看的就是这个文件
             detail = 'recon 未找到本地玩家：' .. tostring(P.__why or '未定位')
@@ -1130,13 +1028,10 @@ return {
     locate_local_player = locate_local_player,
     module_base = module_base,
     now_ms = now_ms,
-    apply_option = apply_option,
     build_menu_specs = build_menu_specs,
-    collect_hook_choices = collect_hook_choices,
     menu_tick = menu_tick,
     frame_tick = frame_tick,
     install_frame_hook = install_frame_hook,
     start_live = start_live,
-    set_mode = set_mode,
     main = main,
 }

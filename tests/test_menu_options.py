@@ -1,13 +1,7 @@
-"""游戏内设置界面（Mod Options Menu 集成）的离线测试。
+"""游戏内连接信息/日志菜单的 LuaJIT 离线测试。
 
-官方 API 参考：https://github.com/CowboyBingus/ModOptionsMenu 的 README
-（api=1 / version=3，register_option / get / set / on_change / ready，
-选项类型 toggle|choice|slider，每个 mod 最多 32 个选项，
-label ≤64 字符、mod 名 ≤40、每个 choice ≤48、description ≤400，
-choice 2~16 项、slider 需要有限且 min<max、0<step<=max-min）。
-
-这里的假菜单按同样语义实现，所以能验证：注册参数合法、值能落到配置、
-失败有原因、菜单不在时不崩也不刷屏。
+使用公开 api=1/version=3 的选择行和动态 description；不伪造纯文本 API。
+信息行不应用任何菜单保存值或用户改动到桥配置。
 """
 
 from __future__ import annotations
@@ -90,148 +84,137 @@ class TestInGameMenu(unittest.TestCase):
         value = spec[key]
         return None if value is None else value
 
-    # ------------------------------------------------------------ 注册
-    def test_registers_options_with_legal_specs(self) -> None:
+    def _description(self, rt, suffix: str) -> str:
+        regs = {r["id"]: r["spec"] for r in self._registered(rt)}
+        text = regs[f"{MOD_ID}.info.{suffix}"]["description"]
+        return text() if callable(text) else text
+
+    def test_registers_information_only(self) -> None:
         rt = self._rt()
-        self._write_cfg("live")
+        self._write_cfg()
         self._load(rt)
         regs = self._registered(rt)
-        self.assertEqual(len(regs), 10, [r["id"] for r in regs])
-        ids = [r["id"] for r in regs]
-        self.assertEqual(ids[0], f"{MOD_ID}.enabled")
-        self.assertEqual(len(set(ids)), len(ids), "选项 id 不能重复")
+        self.assertEqual(len(regs), 10)
+        self.assertEqual(len({r["id"] for r in regs}), 10)
+        self.assertEqual(rt.eval("next(ModOptionsMenu.changes)"), None)
         for r in regs:
-            self.assertTrue(r["id"].startswith(MOD_ID + "."))
-            self.assertLessEqual(len(r["id"].encode()), 96)
+            self.assertTrue(r["id"].startswith(f"{MOD_ID}.info."))
             spec = r["spec"]
-            self.assertIn(self._spec(spec, "type"), ("toggle", "choice", "slider"))
-            # 官方文本上限
-            self.assertLessEqual(len(self._spec(spec, "label")), 64)
-            self.assertLessEqual(len(self._spec(spec, "mod")), 40)
-            desc = self._spec(spec, "description") or ""
-            self.assertLessEqual(len(desc), 400)
-            self.assertEqual(self._spec(spec, "mod_id"), MOD_ID)
-            if self._spec(spec, "type") == "choice":
-                choices = [self._spec(spec, "choices")[i]
-                           for i in range(1, len(self._spec(spec, "choices")) + 1)]
-                self.assertGreaterEqual(len(choices), 2)
-                self.assertLessEqual(len(choices), 16)
-                for c in choices:
-                    self.assertLessEqual(len(c), 48)
-                default = self._spec(spec, "default")
-                self.assertTrue(1 <= default <= len(choices), f"{r['id']} default 越界")
-            if self._spec(spec, "type") == "slider":
-                lo, hi, step = (self._spec(spec, k) for k in ("min", "max", "step"))
-                self.assertLess(lo, hi)
-                self.assertGreater(step, 0)
-                self.assertLessEqual(step, hi - lo)
-                default = self._spec(spec, "default")
-                self.assertTrue(lo <= default <= hi, f"{r['id']} default 越界")
-        self.assertEqual(rt.eval("EXPORTS.menu.registered"), True)
+            self.assertEqual(spec["type"], "choice")
+            self.assertEqual(spec["choices"][1](), spec["choices"][2]())
+            self.assertLessEqual(len(spec["choices"][1]()), 48)
+            self.assertEqual(spec["default"], 1)
+            self.assertLessEqual(len(spec["label"]), 64)
+            self.assertLessEqual(len(spec["mod"]), 40)
+            self.assertLessEqual(len(spec["description"]()), 400)
+        self.assertTrue(rt.eval("EXPORTS.menu.registered"))
 
-    def test_defaults_come_from_effective_config(self) -> None:
-        """菜单默认值必须等于当前生效配置（文件里填过偏移时不能被默认值冲掉）。"""
+    def test_menu_never_reads_or_sets_shared_saved_values(self) -> None:
         rt = self._rt()
-        self._write_cfg("live")
+        rt.execute("menu_value_calls = 0; "
+                   "ModOptionsMenu.get = function() menu_value_calls=menu_value_calls+1 end; "
+                   "ModOptionsMenu.set = ModOptionsMenu.get")
+        self._write_cfg()
         self._load(rt)
-        regs = {r["id"]: r["spec"] for r in self._registered(rt)}
-        self.assertEqual(regs[f"{MOD_ID}.port"]["default"], 47777)
-        self.assertEqual(regs[f"{MOD_ID}.mode"]["default"], 2)  # live
-        self.assertEqual(regs[f"{MOD_ID}.hp_offset"]["default"], 0x20)
-        self.assertEqual(regs[f"{MOD_ID}.limb_offset"]["default"], 0x28)
-        # 钩子默认值应指向配置文件里的那个函数
-        choices = regs[f"{MOD_ID}.hook"]["choices"]
-        names = [choices[i] for i in range(1, len(choices) + 1)]
-        self.assertEqual(names[regs[f"{MOD_ID}.hook"]["default"] - 1], "__hd2_tick")
+        for _ in range(5):
+            rt.execute("EXPORTS.frame_tick()")
+        self.assertEqual(rt.eval("menu_value_calls"), 0)
+
+    def test_saved_legacy_values_cannot_override_file_config(self) -> None:
+        rt = self._rt()
+        rt.execute("ModOptionsMenu.values['hd2coyote.mode'] = 1; "
+                   "ModOptionsMenu.values['hd2coyote.port'] = 48888; "
+                   "ModOptionsMenu.values['hd2coyote.enabled'] = false; "
+                   "ModOptionsMenu.values['hd2coyote.info.endpoint'] = 2")
+        self._write_cfg()
+        self._load(rt)
+        self.assertEqual(rt.eval("EXPORTS.config.mode"), "live")
+        self.assertEqual(rt.eval("EXPORTS.config.port"), 47777)
+        self.assertTrue(rt.eval("EXPORTS.config.enabled"))
+        self.assertEqual(rt.eval("ModOptionsMenu.values['hd2coyote.info.endpoint']"), 2)
+
+    def test_information_interaction_cannot_change_bridge(self) -> None:
+        rt = self._rt()
+        self._write_cfg()
+        self._load(rt)
+        for r in self._registered(rt):
+            rt.execute(f"ModOptionsMenu.apply('{r['id']}', 2)")
+        rt.execute("EXPORTS.menu_tick()")
+        self.assertEqual(rt.eval("EXPORTS.config.mode"), "live")
+        self.assertEqual(rt.eval("EXPORTS.config.port"), 47777)
+        self.assertEqual(rt.eval("EXPORTS.config.interval"), 0.1)
+        self.assertTrue(rt.eval("EXPORTS.config.enabled"))
+        self.assertTrue(rt.eval("EXPORTS.live.active"))
+        self.assertEqual(rt.eval("EXPORTS.profiles.steam_25480438.hp"), 0x20)
+        self.assertEqual(rt.eval("EXPORTS.config.frame_hooks[1]"), "__hd2_tick")
+        self.assertFalse((self.dir / "recon_report.txt").exists())
+        for r in self._registered(rt):
+            self.assertEqual(rt.eval(f"ModOptionsMenu.get('{r['id']}')"), 2)
+
+    def test_connection_information_is_not_peer_acknowledgement(self) -> None:
+        rt = self._rt()
+        self._write_cfg()
+        self._load(rt)
+        self.assertIn("127.0.0.1:47777", self._description(rt, "endpoint"))
+        self.assertIn("无法确认", self._description(rt, "endpoint"))
+        self.assertIn("对端接收未确认", self._description(rt, "transport"))
+        initial = self._description(rt, "packets")
+        rt.execute("EXPORTS.frame_tick()")
+        self.assertNotEqual(initial, self._description(rt, "packets"))
+        rt.execute("FAKE_WS2.Hd2Coyote_sendto = function() return -1 end")
+        rt.execute("EXPORTS.frame_tick()")
+        self.assertIn("发送失败", self._description(rt, "transport"))
+        rt.execute("FAKE_WS2.Hd2Coyote_sendto = function(_, _, n) return n end")
+        rt.execute("EXPORTS.frame_tick()")
+        self.assertIn("对端接收未确认", self._description(rt, "transport"))
+
+    def test_recent_logs_refresh_and_remain_bounded_utf8(self) -> None:
+        rt = self._rt()
+        self._write_cfg()
+        self._load(rt)
+        self.assertIn("STATUS:", self._description(rt, "log1"))
+        # Force protected frame errors, exercising the actual bounded log path.
+        rt.execute("EXPORTS.live.P.hp_anchor = 'base'; "
+                   "EXPORTS.live.R.f32 = function() error(string.rep('测试', 500)) end")
+        for _ in range(12):
+            rt.execute("EXPORTS.frame_tick()")
+        for i in range(1, 7):
+            text = self._description(rt, f"log{i}")
+            self.assertIn("live_step 异常", text)
+            self.assertLessEqual(len(text), 400)
+            self.assertNotIn("\n", text)
+        self.assertEqual(len(self._registered(rt)), 10)
+
+    def test_old_menu_has_explicit_upgrade_message(self) -> None:
+        rt = self._rt()
+        rt.execute("ModOptionsMenu.version = 1")
+        self._write_cfg()
+        self._load(rt)
+        for r in self._registered(rt):
+            self.assertIsInstance(r["spec"]["description"], str)
+            self.assertIn("升级", r["spec"]["description"])
+        self.assertTrue(rt.eval("EXPORTS.live.active"))
 
     def test_partial_failure_is_logged_not_fatal(self) -> None:
         rt = self._rt(menu=False)
         rt.execute("ModOptionsMenu = make_fake_menu({ fail_after = 4 })")
-        self._write_cfg("live")
+        self._write_cfg()
         self._load(rt)
         self.assertEqual(len(self._registered(rt)), 4)
         log = (self.dir / "hd2_coyote_bridge.log").read_text(encoding="utf-8")
-        self.assertIn("部分选项注册失败", log)
-        # 注册失败也不影响 live 工作
-        self.assertEqual(rt.eval("EXPORTS.live.active"), True)
+        self.assertIn("部分信息注册失败", log)
+        self.assertTrue(rt.eval("EXPORTS.live.active"))
 
     def test_gives_up_when_menu_absent(self) -> None:
         rt = self._rt(menu=False)
-        self._write_cfg("live")
+        self._write_cfg()
         self._load(rt)
         rt.execute("EXPORTS.config.menu_retry_frames = 3")
         for _ in range(3):
             rt.execute("EXPORTS.menu_tick()")
-        self.assertEqual(rt.eval("EXPORTS.menu.gave_up"), True)
+        self.assertTrue(rt.eval("EXPORTS.menu.gave_up"))
         log = (self.dir / "hd2_coyote_bridge.log").read_text(encoding="utf-8")
         self.assertIn("放弃注册", log)
-
-    def test_hook_choices_contain_update_and_none(self) -> None:
-        rt = self._rt()
-        self._write_cfg("live")
-        self._load(rt)
-        choices = rt.eval("EXPORTS.menu.hook_choices")
-        values = [choices[i] for i in range(1, len(choices) + 1)]
-        self.assertEqual(values[0], "update", "官方参考：包装全局 update")
-        self.assertIn("none", values)
-        self.assertLessEqual(len(values), 16)
-
-    # ------------------------------------------------------------ APPLY 后生效
-    def test_apply_updates_configuration(self) -> None:
-        rt = self._rt()
-        self._write_cfg("live")
-        self._load(rt)
-
-        rt.execute(f"ModOptionsMenu.apply('{MOD_ID}.port', 48888)")
-        self.assertEqual(rt.eval("EXPORTS.config.port"), 48888)
-
-        rt.execute(f"ModOptionsMenu.apply('{MOD_ID}.interval', 0.25)")
-        self.assertAlmostEqual(rt.eval("EXPORTS.config.interval"), 0.25, places=3)
-
-        rt.execute(f"ModOptionsMenu.apply('{MOD_ID}.enabled', false)")
-        self.assertEqual(rt.eval("EXPORTS.config.enabled"), False)
-
-        rt.execute(f"ModOptionsMenu.apply('{MOD_ID}.limb_shift', 3)")
-        self.assertEqual(rt.eval("EXPORTS.profiles['steam_25480438'].limb_shift"), 3)
-
-    def test_apply_offsets_and_switch_to_live(self) -> None:
-        rt = self._rt()
-        self._write_cfg("recon")  # 先侦察模式，偏移也清空
-        self._load(rt)
-        # 模拟玩家在菜单里填偏移（去掉文件里的 hp，模拟"还没填"）
-        rt.execute("EXPORTS.profiles['steam_25480438'].hp = nil")
-        rt.execute("EXPORTS.live.active = false")
-        rt.execute("EXPORTS.config.mode = 'recon'")
-        self.assertEqual(rt.eval("EXPORTS.live.active"), False)
-
-        rt.execute(f"ModOptionsMenu.apply('{MOD_ID}.hp_offset', 0x20)")
-        self.assertEqual(rt.eval("EXPORTS.profiles['steam_25480438'].hp"), 0x20)
-
-        rt.execute(f"ModOptionsMenu.apply('{MOD_ID}.mode', 2)")  # 切到 Live
-        self.assertEqual(rt.eval("EXPORTS.config.mode"), "live")
-        self.assertEqual(rt.eval("EXPORTS.live.active"), True)
-        status = (self.dir / "hd2_coyote_status.txt").read_text(encoding="utf-8")
-        self.assertTrue(status.startswith("OK - "), status)
-
-    def test_apply_mode_recon_runs_scan(self) -> None:
-        rt = self._rt()
-        self._write_cfg("live")
-        self._load(rt)
-        self.assertTrue((self.dir / "recon_report.txt").exists() is False)
-        rt.execute(f"ModOptionsMenu.apply('{MOD_ID}.mode', 1)")  # 切回侦察
-        self.assertEqual(rt.eval("EXPORTS.config.mode"), "recon")
-        self.assertEqual(rt.eval("EXPORTS.live.active"), False)
-        self.assertTrue((self.dir / "recon_report.txt").exists())
-
-    def test_picking_none_hook_stops_live(self) -> None:
-        rt = self._rt()
-        self._write_cfg("live")
-        self._load(rt)
-        idx = rt.eval("(function() "
-                      "for i, n in ipairs(EXPORTS.menu.hook_choices) do "
-                      "if n == 'none' then return i end end return 1 end)()")
-        rt.execute(f"ModOptionsMenu.apply('{MOD_ID}.hook', {idx})")
-        self.assertEqual(rt.eval("EXPORTS.config.frame_hooks[1]"), "none")
 
     # ------------------------------------------------------------ 帧钩子
     def test_frame_hook_wraps_update_and_forwards(self) -> None:
