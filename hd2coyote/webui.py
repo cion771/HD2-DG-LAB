@@ -363,7 +363,10 @@ class WebApp:
                 "running": st.running,
                 "detecting": st.detecting,
                 "source": self.cfg.source,
+                # 引擎内部统一使用 0..1 比例；额外给前端一个明确命名的百分比，
+                # 避免把满血 1.0 误显示成 1%。保留 hp 供现有 API 客户端兼容。
                 "hp": st.hp,
+                "hp_pct": None if st.hp is None else round(float(st.hp) * 100.0, 1),
                 "limbs": list(st.injury),
                 "output": {"a": st.output_a, "b": st.output_b, "pct": round(st.pct, 1)},
                 "armed": engine.safety.armed,

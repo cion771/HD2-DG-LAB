@@ -90,9 +90,10 @@ function render(s) {
   width('meterA',c.output.a,d.limit_a); width('meterB',c.output.b,d.limit_b); text('outPct',c.output.pct + '%'); text('sess',c.session_seconds + ' s');
   setBadge('armedBadge',c.armed ? '已武装' : '已静音',c.armed ? 'warning' : 'quiet');
   text('state',c.last_error || c.mute_reason || (c.running ? '检测运行中，输出受安全上限约束。' : '尚未开始检测；请先确认设备与安全边界。'));
-  const hasData = receiving && Number.isFinite(c.hp);
-  text('hp',hasData ? Math.round(c.hp) + '%' : '—'); width('hpbar',hasData ? c.hp : 0);
-  text('limbs',hasData ? (c.limbs.map((x,i) => x ? ['左肢','躯干','右肢'][i] || '肢体' + i : '').filter(Boolean).join('、') || '未检测到损伤') : '等待有效数据');
+  const hpPct = c.hp_pct, hasData = bridgeData && typeof hpPct === 'number' && Number.isFinite(hpPct);
+  text('hp',hasData ? Math.round(hpPct) + '%' : '—'); width('hpbar',hasData ? hpPct : 0);
+  const limbNames = ['头部','胸部','左臂','右臂','左腿','右腿'];
+  text('limbs',hasData ? (c.limbs.map((x,i) => x ? limbNames[i] || '部位' + (i + 1) : '').filter(Boolean).join('、') || '未检测到损伤') : '等待有效数据');
   text('rampValue',c.ramp.enabled ? c.ramp.pct + '% / ' + c.ramp.ceiling_pct + '%' : '未启用');
   text('src',(c.sources || []).map(x => x.label + ' · ' + (x.alive ? '在线' : '等待')).join('；') || '尚未启动');
   text('sourceBadge','事件源');

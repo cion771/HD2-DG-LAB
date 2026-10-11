@@ -135,11 +135,19 @@ class TestWebServer(unittest.TestCase):
         status, data = http("GET", self.base + "/api/status")
         self.assertEqual(status, 200)
         self.assertEqual(data["controller"]["version"], __version__)
-        for key in ("running", "detecting", "hp", "limbs", "output", "armed", "device", "hook"):
+        for key in ("running", "detecting", "hp", "hp_pct", "limbs", "output", "armed", "device", "hook"):
             self.assertIn(key, data["controller"])
+        self.assertIsNone(data["controller"]["hp_pct"])
         self.assertIn("events", data)
         self.assertIn("bridge", data)
         self.assertIn("config_path", data["bridge"])
+
+    def test_status_converts_internal_hp_ratio_to_percentage(self) -> None:
+        self.app.engine.status.hp = 1.0
+        status, data = http("GET", self.base + "/api/status")
+        self.assertEqual(status, 200)
+        self.assertEqual(data["controller"]["hp"], 1.0)
+        self.assertEqual(data["controller"]["hp_pct"], 100.0)
 
     def test_unknown_route_404(self) -> None:
         status, _ = http("GET", self.base + "/nope")
