@@ -140,7 +140,7 @@ class UpdateConfig:
     """检查更新（只提示 + 给链接，**绝不自动下载安装**）。"""
 
     enabled: bool = True
-    repo: str = "cion771/hd2-coyote"
+    repo: str = "cion771/HD2-DG-LAB"
     check_on_start: bool = False
     timeout_s: float = 6.0
 

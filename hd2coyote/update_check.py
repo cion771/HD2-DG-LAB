@@ -15,9 +15,9 @@ from typing import Any, Callable
 
 from . import __version__
 
-DEFAULT_REPO = "cion771/hd2-coyote"
+DEFAULT_REPO = "cion771/HD2-DG-LAB"   # 仓库已从 hd2-coyote 改名；GitHub 仍会跳转旧地址
 API_URL = "https://api.github.com/repos/{repo}/releases/latest"
-USER_AGENT = f"hd2-coyote/{__version__}"
+USER_AGENT = f"HD2-DG-LAB/{__version__}"
 
 
 def parse_version(text: Any) -> tuple[int, ...]:

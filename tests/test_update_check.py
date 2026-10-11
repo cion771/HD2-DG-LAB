@@ -15,7 +15,7 @@ from hd2coyote import update_check
 RELEASE = {
     "tag_name": "v0.5.0",
     "name": "hd2-coyote v0.5.0",
-    "html_url": "https://github.com/cion771/hd2-coyote/releases/tag/v0.5.0",
+    "html_url": "https://github.com/cion771/HD2-DG-LAB/releases/tag/v0.5.0",
     "published_at": "2026-10-09T10:20:30Z",
     "prerelease": False,
     "body": "更新说明" * 3000,
@@ -132,7 +132,7 @@ class TestCheck(unittest.TestCase):
         self.assertIn("releases", failure)
 
     def test_default_repo_is_this_project(self) -> None:
-        self.assertEqual(update_check.DEFAULT_REPO, "cion771/hd2-coyote")
+        self.assertEqual(update_check.DEFAULT_REPO, "cion771/HD2-DG-LAB")
 
 
 if __name__ == "__main__":
