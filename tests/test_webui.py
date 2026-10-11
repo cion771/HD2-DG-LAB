@@ -55,16 +55,17 @@ def http(method: str, url: str, payload: dict | None = None) -> tuple[int, dict]
 
 class TestBridgeConfigFile(unittest.TestCase):
     def test_render_and_parse_roundtrip(self) -> None:
-        values = {"mode": "menu", "port": 47778, "interval": 0.2, "profile": "steam_25480438",
-                  "offsets": {"hp": 0x2C, "hp_max": -1, "limb_mask": 0x38, "limb_shift": 2, "dead": -1}}
+        values = {"mode": "menu", "port": 47778, "interval": 0.2,
+                  "profile": "steam_25480438"}
         text = render_bridge_config(values)
         parsed = parse_bridge_config(text)
         self.assertEqual(parsed["mode"], "menu")
         self.assertEqual(parsed["port"], 47778)
         self.assertAlmostEqual(parsed["interval"], 0.2)
-        self.assertEqual(parsed["offsets"]["hp"], 0x2C)
-        self.assertEqual(parsed["offsets"]["limb_shift"], 2)
-        self.assertEqual(parsed["offsets"]["dead"], -1)
+        self.assertEqual(parsed["profile"], "steam_25480438")
+        self.assertNotIn("offsets", parsed)
+        self.assertNotIn("profiles =", text)
+        self.assertIn("自动读取", text)
         self.assertIn("return {", text)
 
     def test_rejects_bad_values(self) -> None:
@@ -76,10 +77,6 @@ class TestBridgeConfigFile(unittest.TestCase):
             render_bridge_config({"mode": "menu", "interval": 99})
         with self.assertRaises(ValueError):
             render_bridge_config({"mode": "menu", "profile": "bad name"})
-        with self.assertRaises(ValueError):
-            render_bridge_config({"mode": "menu", "offsets": {"hp": 999999}})
-        with self.assertRaises(ValueError):
-            render_bridge_config({"mode": "menu", "offsets": {"limb_shift": 9}})
 
     def test_write_makes_backup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -182,7 +179,7 @@ class TestWebServer(unittest.TestCase):
     def test_post_bridge_writes_file(self) -> None:
         status, data = http("POST", self.base + "/api/bridge", {
             "mode": "live", "port": 47779, "interval": 0.15,
-            "offsets": {"hp": 0x2C, "hp_max": 0x30, "limb_mask": 0x38, "limb_shift": 0, "dead": -1},
+            "offsets": {"hp": 999999},  # 旧客户端字段必须忽略，不能覆盖内置布局
         })
         self.assertEqual(status, 200, data)
         self.assertTrue(data["ok"])
@@ -191,7 +188,8 @@ class TestWebServer(unittest.TestCase):
         parsed = parse_bridge_config(path.read_text(encoding="utf-8"))
         self.assertEqual(parsed["mode"], "live")
         self.assertEqual(parsed["port"], 47779)
-        self.assertEqual(parsed["offsets"]["hp"], 0x2C)
+        self.assertNotIn("offsets", parsed)
+        self.assertNotIn("999999", path.read_text(encoding="utf-8"))
         self.assertIn("重启游戏", data["note"])
 
     def test_post_bridge_rejects_bad_mode(self) -> None:

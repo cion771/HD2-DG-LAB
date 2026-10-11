@@ -75,17 +75,11 @@ class TestLuaAddon(unittest.TestCase):
         return rt
 
     def _memory(self, rt, hp=62.0, hp_max=100.0, limb_mask=3, dead=0, bleeding=0) -> None:
-        """按协议语义喂假内存：hp / hp_max 都是**绝对值**（如 62/100）。"""
+        """造当前构建的玩家/网络实体/health manager；不依赖玩家先发 ping。"""
+        life = 2 if dead else (1 if bleeding else 0)
+        rt.execute(f"seed_current_game({int(hp)}, {int(limb_mask)}, {life})")
+        # 单独保留一个高地址指针，覆盖 reader.ptr 的 64 位回归测试。
         rt.execute(f"poke({BASE + 0x3326d20}, u64le({ACTORS}))")
-        rt.execute(f"poke({ACTORS + 0x70}, u32le(1))")
-        rt.execute(f"poke({ACTORS + 0x110}, u64le({PINGREC}))")
-        rt.execute(f"poke({PINGREC + 8}, u32le({ENTITY_ID}))")
-        rt.execute(f"poke({PINGREC + 16}, u32le(7))")
-        rt.execute(f"poke({PINGREC + 0x20}, f32le({hp}))")
-        rt.execute(f"poke({PINGREC + 0x24}, f32le({hp_max}))")
-        rt.execute(f"poke({PINGREC + 0x28}, string.char({limb_mask}))")
-        rt.execute(f"poke({PINGREC + 0x2C}, string.char({dead}))")
-        rt.execute(f"poke({PINGREC + 0x2D}, string.char({bleeding}))")
 
     def _write_user_config(self, mode: str, port: int | None = None,
                            hooks: str = "{ '__hd2_test_tick' }", with_offsets: bool = True) -> None:
@@ -148,10 +142,11 @@ class TestLuaAddon(unittest.TestCase):
         self.assertTrue(status.startswith("OK - "), status)
 
         report = (self.dir / "recon_report.txt").read_text(encoding="utf-8")
-        self.assertIn(f"local_player_entity={ENTITY_ID}", report)
+        self.assertIn(f"local_avatar_entity={ENTITY_ID}", report)
+        self.assertIn("health=OK hp=62/100", report)
         self.assertIn("globals_functions=", report)
-        self.assertIn("anchor_hex_dump:", report)
         self.assertIn("module_base=0x140000000", report)
+        self.assertEqual(rt.eval("FAKE_MODULE_NAME"), "game.dll")
 
     def test_pointer_above_32bit_not_truncated(self) -> None:
         """回归：LuaJIT 的 tonumber(hex,16) 只按 32 位解析，指针不能用它。"""
@@ -176,29 +171,31 @@ class TestLuaAddon(unittest.TestCase):
 
     def test_read_state_values(self) -> None:
         rt = self._rt()
-        self._memory(rt, hp=62.5, hp_max=100.0, limb_mask=3, dead=0, bleeding=1)
-        self._write_user_config("recon")  # 把偏移通过用户配置注入 PROFILES
+        self._memory(rt, hp=62, hp_max=100.0, limb_mask=3, dead=0, bleeding=1)
+        self._write_user_config("recon")
         self._load(rt)
         st = rt.eval("(function() "
                      f"local r = EXPORTS.reader({BASE}) "
-                     f"local p = {{ address = {PINGREC} }} "
+                     f"local p = {{ entity_id = {ENTITY_ID} }} "
                      "return EXPORTS.read_state(r, EXPORTS.profiles['steam_25480438'], p) "
                      "end)()")
         self.assertIsNotNone(st, rt.globals().FAKE_SENT)
-        self.assertAlmostEqual(st["hp"], 62.5, places=2)
-        self.assertAlmostEqual(st["hp_max"], 100.0, places=1)
-        self.assertEqual([st["limbs"][i] for i in range(1, 4)], [1, 1, 0])
-        self.assertEqual(st["bleeding"], 1)
+        self.assertEqual(st["hp"], 62)
+        self.assertEqual(st["hp_max"], 100)
+        self.assertEqual([st["limbs"][i] for i in range(1, 7)], [1, 1, 0, 0, 0, 0])
+        self.assertEqual(st["bleeding"], 0)  # life=1 是倒地，不能冒充流血
+        self.assertEqual(st["downed"], 1)
         self.assertEqual(st["dead"], 0)
 
-    def test_profile_without_offsets_refuses_live(self) -> None:
+    def test_profile_without_manual_offsets_reads_automatically(self) -> None:
         rt = self._rt()
         self._memory(rt)
+        rt.execute("__hd2_test_tick = function() end")
         self._write_user_config("live", with_offsets=False)
         self._load(rt)
         status = (self.dir / "hd2_coyote_status.txt").read_text(encoding="utf-8")
-        self.assertTrue(status.startswith("FAILED - "), status)
-        self.assertIn("hp", status)
+        self.assertTrue(status.startswith("OK - "), status)
+        self.assertIn("health_manager", status)
 
     # ------------------------------------------------------------ 3. live + 帧钩子
     def test_live_mode_hooks_frame_function(self) -> None:
@@ -219,7 +216,7 @@ class TestLuaAddon(unittest.TestCase):
         payload = json.loads(states[0])
         self.assertAlmostEqual(payload["hp"], 62.0, places=2)
         self.assertAlmostEqual(payload["hp_max"], 100.0, places=1)
-        self.assertEqual(payload["limbs"], [1, 1, 0])
+        self.assertEqual(payload["limbs"], [1, 1, 0, 0, 0, 0])
         self.assertEqual(payload["dead"], 0)
         self.assertEqual(payload["v"], 1)
 
@@ -244,8 +241,8 @@ class TestLuaAddon(unittest.TestCase):
         rt.execute('for i=1,8 do __hd2_test_tick() end')
         self.assertTrue(self.exports['live']['ready'])
 
-    def test_configured_unreadable_fields_do_not_send_state(self) -> None:
-        for field, offset in [('hp_max', 0x24), ('limb_mask', 0x28), ('dead', 0x2C), ('bleeding', 0x2D)]:
+    def test_unreadable_health_fields_do_not_send_state(self) -> None:
+        for field, region in [('record', 0x141A00000), ('max_health', 0x141B00000)]:
             with self.subTest(field=field):
                 rt = self._rt()
                 self._memory(rt)
@@ -253,7 +250,7 @@ class TestLuaAddon(unittest.TestCase):
                 self._write_user_config('live')
                 self._load(rt)
                 rt.execute(f'for i=#FAKE_REGIONS,1,-1 do '
-                           f'if FAKE_REGIONS[i].addr == {PINGREC + offset} then '
+                           f'if FAKE_REGIONS[i].addr == {region} then '
                            'table.remove(FAKE_REGIONS,i) end end; FAKE_SENT = {}; __hd2_test_tick()')
                 self.assertFalse(self.exports['live']['ready'])
                 self.assertFalse(any('"ev":"state"' in s for s in lua_list(rt, 'FAKE_SENT')))
@@ -312,16 +309,7 @@ class TestLuaToPythonWire(unittest.TestCase):
         def poke(addr: int, expr: str) -> None:
             rt.execute(f"poke({addr}, {expr})")
 
-        base, actors, rec = 0x140000000, 0x141000000, 0x142000000
-        poke(base + 0x3326d20, f"u64le({actors})")
-        poke(actors + 0x70, "u32le(1)")
-        poke(actors + 0x110, f"u64le({rec})")
-        poke(rec + 8, "u32le(4242)")
-        poke(rec + 16, "u32le(7)")
-        poke(rec + 0x20, "f32le(100.0)")
-        poke(rec + 0x24, "f32le(100.0)")
-        poke(rec + 0x28, "string.char(0)")
-        poke(rec + 0x2C, "string.char(0)")
+        rt.execute("seed_current_game(100, 0, 0)")
 
         # 把 addon 发的报文真发到 Python 的 UDP 端口
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -348,7 +336,7 @@ class TestLuaToPythonWire(unittest.TestCase):
         self.assertTrue(self.src.alive)
         self.assertEqual(self.src.state.build, "1.8.46015.0")
 
-        poke(rec + 0x20, "f32le(62.0)")  # 掉 38% 血
+        poke(0x141A00000 + 20, "u32le(62)")  # 掉 38% 血
         for _ in range(3):
             tick()
             time.sleep(0.03)

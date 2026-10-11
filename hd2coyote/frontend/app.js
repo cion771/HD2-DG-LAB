@@ -4,7 +4,7 @@ const text = (id, value) => { $(id).textContent = value == null ? '—' : String
 const value = id => $(id).value;
 const number = id => { const n = Number(value(id)); if (!value(id).trim() || !Number.isFinite(n) || !$(id).checkValidity()) throw Error('请检查数值范围'); return n; };
 const RULE_NAMES = {damage:'受到伤害', limb_injury:'肢体损伤', death:'阵亡', low_health:'低血量'};
-const VIEWS = {home:['主页概览','设备、游戏与输出状态，在这里一目了然。'], device:['设备连接','在本机准备连接，用 DG-LAB App 扫码配对。'], rules:['强度与规则','先设定输出边界，再调整每个事件的反馈。'], waves:['波形库','管理预设与自定义波形，所有测试仍受安全边界约束。'], bridge:['游戏内桥','循序验证桥接档位，游戏更新后重新核对偏移。'], sources:['事件源','将游戏与外部事件接入同一套规则和安全逻辑。'], diagnostics:['诊断与日志','本机运行记录，帮助定位连接与桥接问题。'], settings:['设置与关于','外观、版本与应用信息。']};
+const VIEWS = {home:['主页概览','设备、游戏与输出状态，在这里一目了然。'], device:['设备连接','在本机准备连接，用 DG-LAB App 扫码配对。'], rules:['强度与规则','先设定输出边界，再调整每个事件的反馈。'], waves:['波形库','管理预设与自定义波形，所有测试仍受安全边界约束。'], bridge:['游戏内桥','live 按受支持的游戏构建自动读取；构建不匹配时安全拒绝。'], sources:['事件源','将游戏与外部事件接入同一套规则和安全逻辑。'], diagnostics:['诊断与日志','本机运行记录，帮助定位连接与桥接问题。'], settings:['设置与关于','外观、版本与应用信息。']};
 let closed = false, closing = false, online = false, timer, lastStatus, cfg, sourceData, waveData, qrKey = '', toastTimer;
 const initialized = new Set();
 function node(tag, cls, content) { const el = document.createElement(tag); if (cls) el.className = cls; if (content != null) el.textContent = content; return el; }
@@ -118,8 +118,8 @@ async function loadConfig() {
   Object.entries(fields).forEach(([id,v]) => { $(id).value = v; }); $('rpOn').checked = cfg.ramp.enabled; $('rpResetOnDeath').checked = cfg.ramp.reset_on_death;
 }
 async function loadBridge() {
-  const b = (await api('/api/status')).bridge || {}, p = b.parsed || {}, o = p.offsets || {};
-  const fields = {bmode:p.mode || 'safe',bport:p.port ?? 47777,bint:p.interval ?? .1,bprof:p.profile || 'steam_25480438',bhp:o.hp ?? 32,bhpma:o.hp_max ?? 36,blimb:o.limb_mask ?? 40,bshift:o.limb_shift ?? 0,bdead:o.dead ?? 44};
+  const b = (await api('/api/status')).bridge || {}, p = b.parsed || {};
+  const fields = {bmode:p.mode || 'safe',bport:p.port ?? 47777,bint:p.interval ?? .1,bprof:p.profile || 'steam_25480438'};
   Object.entries(fields).forEach(([id,v]) => { $(id).value = v; }); text('binfo',b.exists ? '已读取：' + b.config_path : '尚无配置文件；内置默认档位为 safe。写入后重启游戏。');
 }
 async function loadSources() {
@@ -173,7 +173,7 @@ const forms = {
   deviceForm:async () => { if (!await confirmAction('保存设备设置？','当前检测和连接将停止。保存后需手动重新武装、连接和开始检测。')) return; await saveConfig({device:{kind:value('deviceKind'),host:value('deviceHost').trim(),port:number('devicePort'),advertise_ip:value('deviceAdvertise').trim()}}); },
   rampForm:() => saveConfig({ramp:{enabled:$('rpOn').checked,per_event:number('rpPerEvent'),hp_missing_pct:number('rpHp'),ceiling_pct:number('rpCeil'),decay_after_s:number('rpDecayAfter'),decay_per_s:number('rpDecayPer'),reset_on_death:$('rpResetOnDeath').checked}}),
   waveForm:async () => { const body = {action:'set',name:value('wName').trim(),peak:number('wPeak'),freq:value('wFreq') ? number('wFreq') : null}, units = value('wUnits').split(/[\s,;]+/).filter(Boolean); if (units.length) body.units = units; else body.preset = value('wPreset'); toast((await api('/api/waves',body)).applied); await loadWaves(); },
-  bridgeForm:async () => { if (!await confirmAction('写入游戏内桥配置？','写入后需要重启游戏。recon / live 档位依赖正确的游戏版本和字段偏移。')) return; const res = await api('/api/bridge',{mode:value('bmode'),port:number('bport'),interval:number('bint'),profile:value('bprof').trim(),offsets:{hp:number('bhp'),hp_max:number('bhpma'),limb_mask:number('blimb'),limb_shift:number('bshift'),dead:number('bdead')}}); toast(res.note); await loadBridge(); }
+  bridgeForm:async () => { if (!await confirmAction('写入游戏内桥配置？','写入后需要重启游戏。live 会自动校验并读取受支持的游戏构建；不匹配时会拒绝读取。')) return; const res = await api('/api/bridge',{mode:value('bmode'),port:number('bport'),interval:number('bint'),profile:value('bprof').trim()}); toast(res.note); await loadBridge(); }
 };
 async function perform(button, fn) {
   if (button.dataset.busy === 'yes') return; button.dataset.busy = 'yes'; button.disabled = true;

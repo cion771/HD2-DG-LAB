@@ -15,17 +15,16 @@
 --   * 反作弊是 nProtect GameGuard。社区共识：进程内只读 addon 可接受；
 --     从外部进程 OpenProcess / ReadProcessMemory 才是最容易出事的做法 —— 本 addon 不那样做。
 --
--- 两种模式：
---   mode = 'recon'  —— 一次性侦察：模块基址、本地玩家锚点、_G 里的候选钩子名，
---                      并把证据落盘，然后进入终止状态（不周期扫描、不吃帧）。
---   mode = 'live'   —— 自动等待玩家，按 profile 的偏移以 10Hz 上报状态。
---                      找不到玩家/读取失败时每 3 秒重试，数据恢复后自动继续。
---                      偏移没填齐时拒绝启动；不自动猜测偏移、不扫描整个地址空间。
+-- 两种只读数据模式：
+--   mode = 'recon'  —— 一次性验证 game.dll 构建并定位本地玩家，把诊断证据落盘。
+--   mode = 'live'   —— 自动从本地用户 → 玩家 → Avatar → health manager 解析状态，
+--                      以 10Hz 上报；切船/重生时找不到玩家会每 3 秒自动重试。
 --
--- 偏移是"某个游戏构建"的快照，游戏更新会漂移：先跑 recon，更新后重跑 recon。
+-- profile 固定到受支持的游戏构建。每次启动先验证 PE 映像和多处指令指纹；
+-- 构建不匹配就拒绝读取，不接受用户手填偏移，也不扫描整个地址空间。
 
 local ADDON = 'mods/hd2coyote/hd2_coyote_bridge'
-local VERSION = '0.5.5'   -- 必须与仓库根的 VERSION 文件一致（打包时会校验）
+local VERSION = '0.5.6'   -- 必须与仓库根的 VERSION 文件一致（打包时会校验）
 local PROTOCOL = 1
 
 --------------------------------------------------------------------- 配置
@@ -34,8 +33,8 @@ local CONFIG = {
     --   'safe'  = 只写日志（不碰 FFI、不读内存、不挂钩子、不发 UDP、不注册菜单）
     --   'net'   = 再加 FFI + UDP 上报（hello），仍不挂钩子、不读游戏内存
     --   'menu'  = 再加每帧钩子 + 游戏内菜单（仍然**不读游戏内存**）
-    --   'recon' = 再加一次性内存侦察（偏移未验证时用这个）
-    --   'live'  = 按偏移实时读状态并上报
+    --   'recon' = 再加一次性构建校验与本地玩家诊断
+    --   'live'  = 自动解析本地玩家与生命状态并上报
     mode = 'safe',
     enabled = true,            -- 文件配置的上报开关（live/recon 时才有效）
     host = '127.0.0.1',
@@ -49,34 +48,53 @@ local CONFIG = {
     frame_hooks = { 'update', 'Update', 'GameUpdate' },
 }
 
--- 偏移 profile。**全部是某个构建的快照，必须用 recon 验证后再用。**
--- ping_actors / ping_ring / ping_actors_* 取自开源项目
--- etxp/HD2-G60-Smart-Targeting（MIT）—— 目前唯一公开且验证过的
--- "如何在游戏内定位本地玩家实体"的实现，特此署名。
--- hp / limb_mask / dead 需要你跑一次 recon（或离线分析 dump）之后填。
+-- 偏移 profile。全部固定到一个已验证构建；live 启动前会同时验证 PE 映像大小与关键指令。
+-- 布局来自 SkyeShade/HD2Runtime 的公开 F5FEE03DCFDB 研究（MIT）。这里仅实现最小只读子集：
+-- 本地玩家列表、network id -> avatar、health manager 与六个肢体 zone；不调用游戏函数、不写内存。
 local PROFILES = {
     steam_25480438 = {
         build = '1.8.46015.0',
-        -- 本地玩家锚点：ping actor 表里"本地玩家自己发出的 ping"的 creator
-        ping_actors = 0x3326d20,
-        ping_actors_count = 0x70,
-        ping_actors_first = 0x110,
-        ping_actors_stride = 8,
-        ping_ring = 0x347ce30,
-        -- 玩家状态。anchor 决定偏移相对谁：
-        --   'ping_record' = 相对上面定位到的 ping creator 记录地址
-        --   'base'        = 相对模块基址
-        hp_anchor = 'ping_record',
-        hp = nil,              -- float：当前血量（绝对值）
-        hp_max_anchor = 'ping_record',
-        hp_max = nil,          -- float：最大血量（可选，缺省 100）
-        limb_anchor = 'ping_record',
-        limb_mask = nil,       -- u8：肢体损伤位掩码
-        limb_mask_bits = { 1, 2, 4 },
-        dead_anchor = 'ping_record',
-        dead = nil,            -- u8：1 = 阵亡（可选）
-        bleeding_anchor = 'ping_record',
-        bleeding = nil,        -- u8：1 = 流血（可选）
+        exe_sha256_prefix = 'F5FEE03DCFDB',
+        game_dll_sha256_prefix = '2E2C3B7C2500',
+        image_size = 74727424,
+        pins = {
+            { rva = 4867098, hex = '4c8b156722e802', label = 'health manager global' },
+            { rva = 4867242, hex = '4869c1b8010000', label = 'health record stride' },
+            { rva = 6473498, hex = '488b0d479dcf02', label = 'player manager global' },
+            { rva = 6473561, hex = '8b5108', label = 'player entity' },
+            { rva = 11322988, hex = '428b9430a8030000', label = 'player avatar network id' },
+            { rva = 16620452, hex = '4c8b1ded234902', label = 'network entity manager' },
+            { rva = 9576278, hex = '3c02', label = 'injured limb state' },
+        },
+        health = {
+            global = 53634696, capacity = 4112, live = 4128,
+            buckets = 4144, hash_capacity = 4152, hash_empty = 4156,
+            hash_multiplier = 4160, descriptors = 4168, records = 4184,
+            ext_array = 4192, header_size = 88, stride = 440, ext_stride = 28,
+            max_records = 4096, health = 20, life = 412, max_health = 20,
+            descriptor_size = 24, descriptor_type = 0, descriptor_entity = 8,
+            descriptor_flags = 20,
+        },
+        players = {
+            global = 53634152, count = 132, peers = 712, peer_stride = 56,
+            descriptors = 232, descriptor_entity = 8, max_players = 4,
+            local_user = 55037680, local_peer = 45976,
+            avatar_id = 936, avatar_id_stride = 32, no_network_id = 32767,
+        },
+        avatars = {
+            entities = 54968216, map_slots = 15871688, map_capacity = 15871696,
+            map_empty = 15871700, map_multiplier = 15871704,
+            entity_base = 15937312, entity_stride = 24,
+        },
+        injury = {
+            avatar_type = '4D1C334D294DFA97', zone_states = 32, zone_health = 248,
+            -- 协议按 HUD 顺序发送：头、胸、左臂、右臂、左腿、右腿。
+            zones = {
+                { index = 0, max = 85 }, { index = 1, max = 60 },
+                { index = 2, max = 35 }, { index = 3, max = 35 },
+                { index = 4, max = 45 }, { index = 5, max = 45 },
+            },
+        },
     },
 }
 
@@ -173,9 +191,9 @@ end
 --------------------------------------------------------------------- 用户配置
 -- 可选：%LOCALAPPDATA%\hd2coyote\bridge_config.lua（或 bridge_config.txt）
 -- 两种写法都支持：
---   return { config = { mode = 'menu' },
---            profiles = { steam_25480438 = { hp = 0x2C } } }     -- Lua 形式
+--   return { config = { mode = 'menu', port = 47777 } }         -- Lua 形式
 --   mode = menu                                                -- 纯文本形式（最保险）
+-- 内存 profile 只随已测试版本发布，用户配置不能覆盖，避免旧配置破坏构建校验。
 --
 -- ★ 踩过的坑：以前用 loadfile() 读，而且**失败时静默返回** ——
 --   配置文件明明在，addon 却一直跑默认值，日志里一个字都没有，白排查一轮。
@@ -266,10 +284,8 @@ local function apply_user_config()
         CONFIG[k] = v
         applied[#applied + 1] = tostring(k) .. '=' .. tostring(v)
     end
-    for pname, pdata in pairs(user.profiles or {}) do
-        PROFILES[pname] = PROFILES[pname] or {}
-        for k, v in pairs(pdata) do PROFILES[pname][k] = v end
-        applied[#applied + 1] = 'profiles.' .. tostring(pname)
+    if next(user.profiles or {}) ~= nil then
+        log('已忽略用户配置里的 profiles：自动读取布局只能随经验证版本发布，不能手工覆盖')
     end
 
     if type(CONFIG.mode) ~= 'string' or not MODES[CONFIG.mode] then
@@ -375,20 +391,26 @@ local function range_readable(addr, n)
     local m = mbi[0]
     if tonumber(m.State) ~= MEM_COMMIT then return false end
     local prot = tonumber(m.Protect) or 0
-    if not PAGE_READABLE[prot % 0x100] then return false end  -- 去掉 PAGE_GUARD/NOCACHE 等修饰位
+    if math.floor(prot / 0x100) % 2 == 1 then return false end -- PAGE_GUARD：绝不触碰
+    if not PAGE_READABLE[prot % 0x100] then return false end    -- NOCACHE/WRITECOMBINE 不改变可读属性
     local start = tonumber(ffi.cast('uintptr_t', m.BaseAddress))
     local size = tonumber(m.RegionSize)
     if not start or not size then return false end
     return (addr + n) <= (start + size)
 end
 
--- 模块基址 = 主 exe 基址。ASLR 每次运行都不同，所以只能"基址 + 相对偏移"。
+-- 数据布局偏移属于 game.dll，不属于 helldivers2.exe。
+-- ASLR 每次运行都不同，所以必须取 game.dll 基址再加相对偏移。
+-- 旧版错误地 GetModuleHandleA(nil) 取了主 EXE，导致 ping actor 指针落到无关地址。
 local function module_base()
     if not init_ffi() then return nil end
     local ok, base = pcall(function()
-        return tonumber(ffi.cast('uintptr_t', K32.Hd2Coyote_GetModuleHandleA(nil)))
+        return tonumber(ffi.cast('uintptr_t', K32.Hd2Coyote_GetModuleHandleA('game.dll')))
     end)
-    if not ok or not base or base == 0 then return nil end
+    if not ok or not base or base == 0 then
+        ffi_reason = '拿不到 game.dll 基址'
+        return nil
+    end
     return base
 end
 
@@ -426,6 +448,11 @@ local function reader(base)
         local s = R.bytes(off, 4); if not s then return nil end
         local b1, b2, b3, b4 = s:byte(1, 4)
         return b1 + b2 * 256 + b3 * 65536 + b4 * 16777216
+    end
+    function R.i32(off)
+        local value = R.u32(off)
+        if value == nil then return nil end
+        return value >= 2147483648 and value - 4294967296 or value
     end
     function R.u64hex(off)
         local s = R.bytes(off, 8); if not s then return nil end
@@ -519,102 +546,194 @@ local function json(pairs_list)
     return '{' .. table.concat(parts, ',') .. '}'
 end
 
---------------------------------------------------------------------- 本地玩家定位
--- 思路（来自 etxp/HD2-G60-Smart-Targeting 的公开实现）：
---   游戏维护一张 ping actor 表；本地玩家自己发出的 ping，其 creator 就是本地玩家。
--- 所有边界都要校验；校验不过就判定 profile 失效，绝不"猜着读"。
+--------------------------------------------------------------------- 构建验证与本地玩家定位
+local function hex_bytes(hex)
+    local out = {}
+    for pair in tostring(hex):gmatch('%x%x') do out[#out + 1] = string.char(tonumber(pair, 16)) end
+    return table.concat(out)
+end
+
+-- 读取任何 profile 地址之前先证明当前 game.dll 就是研究所对应的映像。
+-- 进程内用 PE SizeOfImage + 分散在关键读取路径上的多处指令 pin，防止更新后误读。
+local function verify_profile(R, P)
+    if P.__verified then return true end
+    local mz = R.bytes(0, 2)
+    local pe = R.u32(0x3C)
+    if mz ~= 'MZ' or not pe or pe < 0x40 or pe > 0x1000 then return false, 'game.dll PE 头无效' end
+    if R.bytes(pe, 4) ~= 'PE\0\0' then return false, 'game.dll PE 签名无效' end
+    local image_size = R.u32(pe + 80)
+    if image_size ~= P.image_size then
+        return false, string.format('game.dll 映像大小不匹配（%s，期望 %s）', tostring(image_size), tostring(P.image_size))
+    end
+    for _, pin in ipairs(P.pins or {}) do
+        local expected = hex_bytes(pin.hex)
+        if #expected == 0 or R.bytes(pin.rva, #expected) ~= expected then
+            return false, '游戏构建不匹配：' .. tostring(pin.label)
+        end
+    end
+    P.__verified = true
+    return true
+end
+
+-- (a*b) mod 2^32；拆成 16 位，避免 Lua number 乘法超过 2^53 后丢精度。
+local function mul32(a, b)
+    local low, high = b % 65536, math.floor(b / 65536)
+    return (a * low + ((a * high) % 65536) * 65536) % 4294967296
+end
+
+local function power_of_two(value)
+    if not value or value < 1 or value % 1 ~= 0 then return false end
+    while value > 1 do
+        if value % 2 ~= 0 then return false end
+        value = value / 2
+    end
+    return true
+end
+
+local function network_entity(R, P, network_id)
+    local A = P.avatars
+    if not network_id or network_id == P.players.no_network_id then return nil end
+    local manager = R.ptr(A.entities)
+    if not manager then return nil end
+    local M = reader(manager)
+    local slots = M.ptr(A.map_slots)
+    local capacity = M.u32(A.map_capacity)
+    local empty = M.u32(A.map_empty)
+    local multiplier = M.u32(A.map_multiplier)
+    if not slots or not capacity or not empty or not multiplier
+        or capacity > 1048576 or not power_of_two(capacity) then return nil end
+    local S = reader(slots)
+    local start = mul32(network_id, multiplier)
+    for probe = 0, math.min(capacity, 4096) - 1 do
+        local off = ((start + probe) % capacity) * 8
+        local key = S.u32(off)
+        if key == nil then return nil end
+        if key == network_id then
+            local index = S.u32(off + 4)
+            return index and M.u32(A.entity_base + index * A.entity_stride) or nil
+        end
+        if key == empty then return nil end
+    end
+    return nil
+end
+
+-- 不再依赖“玩家必须先发过 ping”。直接从玩家管理器匹配本机 peer，再解析其 avatar network id。
 local function locate_local_player(R, P)
     local function find()
-        local actors = R.ptr(P.ping_actors)
-        if not actors then return nil, 'ping actor 表指针为空（偏移可能已失效）' end
-        -- 注意：count / 条目都在 actors 表内部，必须用 actors 自己的 reader
-        local AR = reader(actors)
-        local count = AR.u32(P.ping_actors_count)
-        if not count then return nil, '读不到 actor 数量' end
-        if count > 16 then return nil, 'actor 数量异常（' .. count .. '）' end
-        for i = 0, count - 1 do
-            local off = P.ping_actors_first + i * P.ping_actors_stride
-            local ptr = AR.ptr(off)
-            if ptr then
-                local rec = reader(ptr)
-                local id = rec.u32(16)
-                local entity = rec.u32(8)
-                if id and id ~= 0 and entity and entity ~= 0 and entity ~= 0xFFFFFFFF then
-                    return { entity_id = entity, id = id, address = ptr, record = ptr }
+        local valid, why = verify_profile(R, P)
+        if not valid then return nil, why end
+        local L = P.players
+        local user = R.ptr(L.local_user)
+        local manager = R.ptr(L.global)
+        if not user then return nil, '本地用户上下文尚未就绪' end
+        if not manager then return nil, '玩家管理器尚未就绪' end
+        local local_peer = reader(user).u64hex(L.local_peer)
+        if not local_peer then return nil, '读不到本地 peer id' end
+        local M = reader(manager)
+        local count = M.u32(L.count)
+        if count == nil then return nil, '读不到玩家数量' end
+        if count > L.max_players then return nil, '玩家数量异常（' .. tostring(count) .. '）' end
+        for slot = 0, count - 1 do
+            if M.u64hex(L.peers + slot * L.peer_stride) == local_peer then
+                local descriptor = M.ptr(L.descriptors + slot * 8)
+                local player_entity = descriptor and reader(descriptor).u32(L.descriptor_entity) or nil
+                local network_id = M.u32(L.avatar_id + slot * L.avatar_id_stride)
+                local avatar = network_entity(R, P, network_id)
+                if avatar and avatar ~= 0 and avatar ~= 0xFFFFFFFF then
+                    return { entity_id = avatar, id = network_id, address = descriptor,
+                             player_entity = player_entity, slot = slot }
                 end
+                return nil, '本地玩家尚无可用 avatar（飞船切换/重生时会自动重试）'
             end
         end
-        return nil, '没有找到本地 ping creator'
+        return nil, '玩家列表中未找到本地 peer'
     end
     local ok, player, why = pcall(find)
     if not ok then return nil, '定位异常：' .. tostring(player) end
     return player, why
 end
 
-local function anchor_reader(R, P, player, anchor_key)
-    local anchor = P[anchor_key] or 'ping_record'
-    if anchor == 'base' then return R end
-    if not player or not player.address then return nil end
-    return reader(player.address)
+local function health_header(R, H)
+    local manager = R.ptr(H.global)
+    if not manager then return nil, '生命管理器尚未就绪' end
+    local M = reader(manager)
+    local capacity, live, hash_capacity = M.u32(H.capacity), M.u32(H.live), M.u32(H.hash_capacity)
+    if not capacity or capacity == 0 or capacity > H.max_records or not live or live > capacity
+        or not hash_capacity or hash_capacity > 65536 or not power_of_two(hash_capacity) then
+        return nil, '生命管理器头无效'
+    end
+    local header = {
+        manager = manager, capacity = capacity, live = live, hash_capacity = hash_capacity,
+        hash_empty = M.u32(H.hash_empty), hash_multiplier = M.u32(H.hash_multiplier),
+        buckets = M.ptr(H.buckets), descriptors = M.ptr(H.descriptors),
+        records = M.ptr(H.records), ext = M.ptr(H.ext_array),
+    }
+    if header.hash_empty == nil or header.hash_multiplier == nil or not header.buckets
+        or not header.descriptors or not header.records then return nil, '生命管理器指针无效' end
+    return header
+end
+
+local function health_index(header, entity)
+    local B = reader(header.buckets)
+    local start = mul32(entity, header.hash_multiplier)
+    for probe = 0, header.hash_capacity - 1 do
+        local off = ((start + probe) % header.hash_capacity) * 8
+        local key = B.u32(off)
+        if key == nil then return nil end
+        if key == entity then
+            local index = B.u32(off + 4)
+            return index and index < header.live and index or nil
+        end
+        if key == header.hash_empty then return nil end
+    end
+    return nil
+end
+
+local function zone_state(record, offset, index)
+    local word = record.u32(offset + math.floor(index / 16) * 4)
+    return word and math.floor(word / (4 ^ (index % 16))) % 4 or nil
 end
 
 --------------------------------------------------------------------- 状态读取
--- 返回 { hp, hp_max, limbs, bleeding, dead }，读不到就返回 nil + 原因
+-- 返回真实 health record：整数 HP、六肢伤势、倒地/阵亡。每次都重解 hash 与 descriptor，拒绝陈旧实体。
 local function read_state(R, P, player)
-    if not player then return nil, 'NO_PLAYER' end
-    if not P.hp then return nil, 'NO_HP_OFFSET' end
+    if not player or not player.entity_id then return nil, 'NO_PLAYER' end
+    local valid, why = verify_profile(R, P)
+    if not valid then return nil, why end
+    local H, I = P.health, P.injury
+    local header, header_why = health_header(R, H)
+    if not header then return nil, header_why end
+    local index = health_index(header, player.entity_id)
+    if index == nil then return nil, '本地 avatar 暂无生命记录' end
+    local descriptor = reader(header.descriptors).ptr(index * 8)
+    if not descriptor then return nil, '生命 descriptor 不可读' end
+    local D = reader(descriptor)
+    if D.u32(H.descriptor_entity) ~= player.entity_id then return nil, '生命 descriptor 已失效' end
+    if D.u64hex(H.descriptor_type) ~= I.avatar_type then return nil, '实体不是 Helldiver avatar' end
+    local flags = D.u32(H.descriptor_flags)
+    if flags == nil or flags % 2 ~= 1 then return nil, 'avatar 不属于本机' end
 
-    local HR = anchor_reader(R, P, player, 'hp_anchor')
-    if not HR then return nil, 'NO_ANCHOR' end
-    local hp = HR.f32(P.hp)
-    if hp == nil then return nil, 'HP_READ_FAILED' end
-    if hp < 0 or hp > 1e9 then return nil, 'HP_OUT_OF_RANGE' end
-
-    local hp_max = 100
-    if P.hp_max then
-        local MR = anchor_reader(R, P, player, 'hp_max_anchor')
-        local v = MR and MR.f32(P.hp_max)
-        if not v or v <= 0 or v > 1e9 then return nil, 'HP_MAX_INVALID' end
-        hp_max = v
+    local record = reader(header.records + index * H.stride)
+    local hp, life = record.i32(H.health), record.u32(H.life)
+    if hp == nil or life == nil or hp < -100000 or hp > 100000 or life > 16 then
+        return nil, '生命记录数值异常'
     end
+    local hp_max = header.ext and reader(header.ext + index * H.ext_stride).u32(H.max_health) or nil
+    if not hp_max or hp_max == 0 or hp_max > 100000 then return nil, '最大生命值无效' end
 
-    local limbs = { 0, 0, 0 }
-    if P.limb_mask then
-        local LR = anchor_reader(R, P, player, 'limb_anchor')
-        local mask = LR and LR.u8(P.limb_mask)
-        if mask == nil then return nil, 'LIMB_READ_FAILED' end
-        if mask then
-            if P.limb_mask_bits then
-                for i, bit in ipairs(P.limb_mask_bits) do
-                    limbs[i] = (math.floor(mask / bit) % 2 == 1) and 1 or 0
-                end
-            else
-                -- 掩码 + 起始位（通过桥配置调整）：bit(shift+i-1) -> 第 i 个槽位
-                local m = math.floor(mask / 2 ^ (P.limb_shift or 0))
-                for i = 1, 3 do
-                    limbs[i] = (math.floor(m / 2 ^ (i - 1)) % 2 == 1) and 1 or 0
-                end
-            end
+    local limbs = {}
+    for slot, zone in ipairs(I.zones) do
+        local value = record.i32(I.zone_health + zone.index * 4)
+        local state = zone_state(record, I.zone_states, zone.index)
+        if value == nil or state == nil or value < -100000 or value > 100000 or state > 3 then
+            return nil, '肢体生命记录异常（slot=' .. tostring(slot) .. '）'
         end
+        -- 游戏自己的受伤判定是 zone state == 2；zone health 仅用于合理性验证，
+        -- 不把 0 HP 猜成受伤，避免不同护甲/状态下产生假事件。
+        limbs[slot] = state == 2 and 1 or 0
     end
-
-    local bleeding = 0
-    if P.bleeding then
-        local BR = anchor_reader(R, P, player, 'bleeding_anchor')
-        local v = BR and BR.u8(P.bleeding)
-        if v ~= 0 and v ~= 1 then return nil, 'BLEEDING_INVALID' end
-        bleeding = v
-    end
-
-    local dead = 0
-    if P.dead then
-        local DR = anchor_reader(R, P, player, 'dead_anchor')
-        local v = DR and DR.u8(P.dead)
-        if v ~= 0 and v ~= 1 then return nil, 'DEAD_INVALID' end
-        dead = v
-    end
-
-    return { hp = hp, hp_max = hp_max, limbs = limbs, bleeding = bleeding, dead = dead }
+    return { hp = math.max(0, hp), hp_max = hp_max, limbs = limbs,
+             bleeding = 0, downed = life == 1 and 1 or 0, dead = life >= 2 and 1 or 0 }
 end
 
 -- 把原始字节串格式化成"16 进制 dump"文本。
@@ -634,7 +753,7 @@ end
 --------------------------------------------------------------------- recon
 -- 一次性、有界、带落盘证据。做完即终止，不做周期扫描（帧率优先）。
 local function recon(R, P, base, player)
-    local out = {}
+    local out, health_ok = {}, false
     local function say(s) out[#out + 1] = s; log(s) end
     say(string.format('module_base=0x%X profile=%s build=%s', base, CONFIG.profile,
                       tostring(P.build)))
@@ -659,25 +778,28 @@ local function recon(R, P, base, player)
         say('globals= 枚举失败（_G 不可遍历）')
     end
 
-    -- 2) 本地玩家锚点 + 有界 dump（只 dump 锚点附近，不做全地址空间扫描）
+    -- 2) 本地玩家 + 自动解析结果；只对已证明的 descriptor 做有界 dump。
     if player then
-        say(string.format('local_player_entity=%d ping_id=%d anchor=0x%X',
+        say(string.format('local_avatar_entity=%d network_id=%d player_descriptor=0x%X',
                           player.entity_id, player.id, player.address))
+        local state, why = read_state(R, P, player)
+        if state then
+            health_ok = true
+            say(string.format('health=OK hp=%d/%d limbs=%s dead=%d', state.hp, state.hp_max,
+                              table.concat(state.limbs, ','), state.dead))
+        else
+            say('health=FAILED（' .. tostring(why) .. '）')
+        end
         local n = math.min(CONFIG.max_dump_bytes, 0x400)
         local raw = reader(player.address).hex(0, n)
-        if raw then
-            say('anchor_hex_dump:\n' .. table.concat(hexdump_lines(raw), '\n'))
-        else
-            say('anchor_hex_dump: 读取失败（地址未映射或已失效）')
-        end
-        say('next: 把 hp / limb_mask / dead 的偏移填进 PROFILES.' .. CONFIG.profile)
+        if raw then say('descriptor_hex_dump:\n' .. table.concat(hexdump_lines(raw), '\n')) end
     else
         say('local_player=UNKNOWN（' .. tostring(P.__why or '未定位') .. '）')
-        say('提示：本地玩家要在飞船/局内存在 ping actor 时才可定位，请重跑一次 recon')
+        say('提示：飞船切换或重生期间 avatar 可能暂时不存在；等待后再运行 recon')
     end
 
     file_write(join(LOG_DIR, 'recon_report.txt'), table.concat(out, '\n') .. '\n', false)
-    return player ~= nil
+    return health_ok
 end
 
 --------------------------------------------------------------------- 游戏内连接信息与日志
@@ -830,8 +952,8 @@ local function live_step()
     end
     if not live.ready then
         live.ready, live.wait_reason = true, nil
-        status(true, string.format('live 自动读取中（profile=%s hook=%s hp=0x%X）',
-                                  CONFIG.profile, tostring(HOOK.name or '?'), P.hp))
+        status(true, string.format('live 自动读取中（profile=%s hook=%s source=health_manager）',
+                                  CONFIG.profile, tostring(HOOK.name or '?')))
     end
     live.failures = 0
     send(json({
@@ -847,8 +969,8 @@ local function start_live()
         status(false, '未知 profile：' .. tostring(CONFIG.profile))
         return false
     end
-    if not P.hp then
-        status(false, 'live 模式缺少 hp 偏移：请在桌面端填 HP Offset 并重启游戏，或跑一次侦察')
+    if not (P.health and P.players and P.avatars and P.injury) then
+        status(false, 'live profile 缺少自动读取布局')
         return false
     end
     live.base = live.base or module_base()
@@ -870,8 +992,8 @@ local function start_live()
     if not player then
         wait_for_player(why)
     else
-        status(true, string.format('live 自动读取已启动，等待首个有效状态（profile=%s hook=%s hp=0x%X）',
-                                   CONFIG.profile, tostring(HOOK.name or '?'), P.hp))
+        status(true, string.format('live 自动读取已启动，等待首个有效状态（profile=%s hook=%s source=health_manager）',
+                                   CONFIG.profile, tostring(HOOK.name or '?')))
     end
     return true
 end
@@ -1010,7 +1132,7 @@ local function main()
         return
     end
 
-    log('开始定位本地玩家（偏移来自 profile，可能与本构建不符）…')
+    log('开始校验 game.dll 构建并自动定位本地玩家…')
     local player, why = locate_local_player(R, P)
     if not player then
         P.__why = why
@@ -1023,7 +1145,7 @@ local function main()
         local found = recon(R, P, base, player)
         local detail
         if found then
-            detail = 'recon 完成：请在桌面端填写血量偏移并重启游戏'
+            detail = 'recon 完成：已自动定位本地玩家；报告包含生命数据验证结果'
         else
             -- 把具体原因写进 STATUS：用户第一眼看的就是这个文件
             detail = 'recon 未找到本地玩家：' .. tostring(P.__why or '未定位')

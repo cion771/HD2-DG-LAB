@@ -87,7 +87,7 @@ except ImportError:
 
 @unittest.skipIf(LuaRuntime is None, 'requires LuaJIT test dependency')
 class TestLuaHeartbeat(unittest.TestCase):
-    def test_menu_and_failed_recon_heartbeat_without_memory_probe(self):
+    def test_menu_recon_and_waiting_live_keep_heartbeating(self):
         for mode in ('menu', 'recon', 'live'):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
                 with patch.dict(os.environ, {'HD2COYOTE_DIR':tmp}):
@@ -106,8 +106,12 @@ class TestLuaHeartbeat(unittest.TestCase):
                     self.assertGreaterEqual(len(beats), 2)
                     self.assertEqual(beats[-1]['mode'], mode)
                     self.assertFalse(any(p['ev']=='state' for p in messages))
-                    self.assertEqual(rt.eval('FAKE_PEEK_CALLS'), reads)
-                    self.assertEqual(rt.eval('FAKE_VQ_CALLS'), queries)
+                    if mode != 'live':
+                        self.assertEqual(rt.eval('FAKE_PEEK_CALLS'), reads)
+                        self.assertEqual(rt.eval('FAKE_VQ_CALLS'), queries)
+                    else:
+                        # live 必须按 3 秒退避重新定位；失败期间不发 state，但会进行有界校验读取。
+                        self.assertGreaterEqual(rt.eval('FAKE_VQ_CALLS'), queries)
                     self.assertTrue(beats[-1]['detail'])
 
 if __name__ == '__main__':

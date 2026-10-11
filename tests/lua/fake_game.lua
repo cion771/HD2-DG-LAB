@@ -16,6 +16,7 @@ FAKE_FORWARD = nil
 FAKE_MBI_SIZE = 48
 FAKE_VQ_CALLS = 0      -- VirtualQuery 被调用次数（安全测试用：safe 模式必须是 0）
 FAKE_PEEK_CALLS = 0    -- 假内存实际被读次数
+FAKE_MODULE_NAME = nil -- GetModuleHandleA 的参数；必须是 game.dll，不能再取主 EXE
 
 local function region_of(addr)
     for _, r in ipairs(FAKE_REGIONS) do
@@ -75,6 +76,75 @@ function u64le(v)
     return table.concat(out)
 end
 
+function hexle(hex)
+    local out = {}
+    for pair in tostring(hex):gmatch('%x%x') do table.insert(out, 1, string.char(tonumber(pair, 16))) end
+    return table.concat(out)
+end
+
+-- 当前受支持构建的最小只读内存布局。测试只造桥实际会读的字段，所有未映射访问仍会被拒绝。
+function seed_current_game(hp, limb_mask, life)
+    hp, limb_mask, life = hp or 62, limb_mask or 0, life or 0
+    local base = FAKE_BASE
+    local players, user = 0x141100000, 0x141200000
+    local player_desc, entities = 0x141300000, 0x141400000
+    local net_slots = 0x141500000
+    local health, buckets = 0x141600000, 0x141700000
+    local desc_array, health_desc = 0x141800000, 0x141900000
+    local records, ext = 0x141A00000, 0x141B00000
+    local entity, network_id = 4242, 7
+
+    map(base, 0x1000)
+    poke(base, 'MZ'); poke(base + 0x3C, u32le(0x100))
+    poke(base + 0x100, 'PE\0\0'); poke(base + 0x100 + 80, u32le(74727424))
+    local pins = {
+        {4867098,'4c8b156722e802'}, {4867242,'4869c1b8010000'},
+        {6473498,'488b0d479dcf02'}, {6473561,'8b5108'},
+        {11322988,'428b9430a8030000'}, {16620452,'4c8b1ded234902'},
+        {9576278,'3c02'},
+    }
+    for _, pin in ipairs(pins) do
+        local bytes = {}
+        for pair in pin[2]:gmatch('%x%x') do bytes[#bytes + 1] = string.char(tonumber(pair, 16)) end
+        poke(base + pin[1], table.concat(bytes))
+    end
+
+    poke(base + 53634152, u64le(players)); poke(base + 55037680, u64le(user))
+    map(players, 0x1000)
+    poke(user + 45976, u64le(0x12345678))
+    poke(players + 132, u32le(1)); poke(players + 712, u64le(0x12345678))
+    poke(players + 232, u64le(player_desc)); poke(player_desc + 8, u32le(111))
+    poke(players + 936, u32le(network_id))
+
+    poke(base + 54968216, u64le(entities))
+    poke(entities + 15871688, u64le(net_slots)); poke(entities + 15871696, u32le(64))
+    poke(entities + 15871700, u32le(0)); poke(entities + 15871704, u32le(1))
+    map(net_slots, 64 * 8)
+    poke(net_slots + network_id * 8, u32le(network_id) .. u32le(0))
+    poke(entities + 15937312, u32le(entity))
+
+    poke(base + 53634696, u64le(health)); map(health + 4112, 88)
+    poke(health + 4112, u32le(8)); poke(health + 4128, u32le(1))
+    poke(health + 4144, u64le(buckets)); poke(health + 4152, u32le(64))
+    poke(health + 4156, u32le(0)); poke(health + 4160, u32le(1))
+    poke(health + 4168, u64le(desc_array)); poke(health + 4184, u64le(records))
+    poke(health + 4192, u64le(ext))
+    map(buckets, 64 * 8); poke(buckets + (entity % 64) * 8, u32le(entity) .. u32le(0))
+    poke(desc_array, u64le(health_desc)); map(health_desc, 24)
+    poke(health_desc, hexle('4D1C334D294DFA97')); poke(health_desc + 8, u32le(entity))
+    poke(health_desc + 20, u32le(1))
+    map(records, 440); poke(records + 20, u32le(hp)); poke(records + 412, u32le(life))
+    local states = 0
+    local maxima = {85, 60, 35, 35, 45, 45}
+    for i = 0, 5 do
+        local injured = math.floor(limb_mask / 2 ^ i) % 2 == 1
+        if injured then states = states + 2 * 4 ^ i end
+        poke(records + 248 + i * 4, u32le(injured and 0 or maxima[i + 1]))
+    end
+    poke(records + 32, u32le(states))
+    map(ext, 28); poke(ext + 20, u32le(100))
+end
+
 -- IEEE754 单精度小端编码（LuaJIT 没有 string.pack）
 function f32le(x)
     if x == 0 then return string.char(0, 0, 0, 0) end
@@ -128,7 +198,7 @@ fake.sizeof = function(_) return FAKE_MBI_SIZE end
 
 --: kernel32 命名空间（addon 用 ffi.load('kernel32') 拿它）
 FAKE_K32 = {
-    Hd2Coyote_GetModuleHandleA = function(_) return FAKE_BASE end,
+    Hd2Coyote_GetModuleHandleA = function(name) FAKE_MODULE_NAME = name; return FAKE_BASE end,
     Hd2Coyote_GetTickCount64 = function()
         FAKE_TICK = FAKE_TICK + 1000  -- 每次调用前进 1 秒，便于驱动上报节流
         return FAKE_TICK

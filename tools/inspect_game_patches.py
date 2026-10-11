@@ -86,7 +86,7 @@ def main() -> int:
             print(f"  patch_{index:<3} {head}")
 
     if not found:
-        print(f"\n❌ 没有部署：{args.expect}")
+        print(f"\n[NO] 没有部署：{args.expect}")
         print("   → 把 build/HD2-Coyote-Bridge-<版本>.zip 用 Arsenal / HD2 Mod Manager 导入、")
         print("     启用、Deploy，然后重启游戏。菜单分类要重启后才出现。")
         print("     （版本号见仓库根的 VERSION 文件；也可用 tools/build_addon.py 手工部署）")
@@ -94,7 +94,7 @@ def main() -> int:
 
     source = Path(args.source)
     current = source.read_bytes() if source.exists() else b""
-    print(f"\n✅ 已部署 {args.expect}")
+    print(f"\n[OK] 已部署 {args.expect}")
     for index, _archive, res in sorted(found):
         same = "与本地源码一致" if current and res.data == current else "**与本地源码不同（旧版本？）**"
         head = res.data.split(b"\n", 1)[0].decode("utf-8", "replace")

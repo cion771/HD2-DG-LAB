@@ -241,7 +241,7 @@ class HookSource:
         s = self.state
         if not self.alive:
             if self.connected:
-                detail = s.bridge_detail or '没有有效玩家状态；menu/recon 不持续上报血量，live 还需有效偏移'
+                detail = s.bridge_detail or '没有有效玩家状态；请使用 live，并确认当前游戏构建受支持且本地玩家已生成'
                 return f"桥在线（mode={s.mode or '?'}），游戏数据未就绪：{detail}"
             return (f"等待游戏桥（UDP {self.hook_cfg.host}:{self.hook_cfg.port}）；"
                     "先开始检测。旧版只发送一次 hello，可能需要先开控制器再重启游戏。")

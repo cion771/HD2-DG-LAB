@@ -32,6 +32,7 @@ FAKE = ROOT / "tests" / "lua" / "fake_game.lua"
 BASE = 0x140000000
 ACTORS = 0x141000000
 PINGREC = 0x142000000
+PLAYERS = 0x141100000
 UNMAPPED = 0x150000000
 KERNELISH = 0xFFFF800000000000
 
@@ -57,13 +58,8 @@ class TestCrashSafety(unittest.TestCase):
         if not with_virtual_query:
             rt.execute("require('ffi').load('kernel32').Hd2Coyote_VirtualQuery = nil")
         if with_memory:
+            rt.execute("seed_current_game(62, 0, 0)")
             rt.execute(f"map({PINGREC}, 0x100)")
-            rt.execute(f"poke({BASE + 0x3326d20}, u64le({ACTORS}))")
-            rt.execute(f"poke({ACTORS + 0x70}, u32le(1))")
-            rt.execute(f"poke({ACTORS + 0x110}, u64le({PINGREC}))")
-            rt.execute(f"poke({PINGREC + 8}, u32le(4242))")
-            rt.execute(f"poke({PINGREC + 16}, u32le(7))")
-            rt.execute(f"poke({PINGREC + 0x20}, f32le(62.0))")
         rt.execute("__hd2_tick = function() end")
         return rt
 
@@ -100,35 +96,34 @@ class TestCrashSafety(unittest.TestCase):
         self.assertIsNone(value)
 
     def test_garbage_pointer_does_not_crash(self) -> None:
-        """ping actor 表指向未映射内存：定位失败，但**进程必须活着**。"""
+        """玩家管理器指向未映射内存：定位失败，但进程必须活着。"""
         rt = self._rt()
-        rt.execute(f"poke({BASE + 0x3326d20}, u64le({UNMAPPED}))")
+        rt.execute(f"poke({BASE + 53634152}, u64le({UNMAPPED}))")
         self._cfg("recon")
         self._load(rt)
         status = self._status()
         self.assertTrue(status.startswith("FAILED - "), status)
-        self.assertIn("actor", status)
+        self.assertIn("玩家数量", status)
 
     def test_kernel_address_is_rejected_before_deref(self) -> None:
         rt = self._rt()
-        rt.execute(f"poke({BASE + 0x3326d20}, u64le({KERNELISH}))")
+        rt.execute(f"poke({BASE + 53634152}, u64le({KERNELISH}))")
         self._cfg("recon")
         self._load(rt)
         value = rt.eval(f"(function() local R = EXPORTS.reader({BASE}) "
-                        f"return R.ptr(0x3326d20) end)()")
+                        f"return R.ptr({53634152}) end)()")
         self.assertEqual(value, KERNELISH, "指针本身能读出来")
-        # 通过这个内核态指针去读：必须在解引用之前被拒
         self.assertIsNone(
             rt.eval(f"(function() local R = EXPORTS.reader({BASE}) "
-                    f"local p = R.ptr(0x3326d20) "
+                    f"local p = R.ptr({53634152}) "
                     f"return EXPORTS.reader(p).u32(0) end)()"),
             "内核态地址绝不能被解引用")
         self.assertIn("FAILED", self._status())
 
     def test_count_sanity_rejects_garbage(self) -> None:
-        """读到"合法但错误"的数据时，靠合理性校验拒绝（不是靠崩溃）。"""
+        """读到合法但错误的数据时，靠合理性校验拒绝（不是靠崩溃）。"""
         rt = self._rt()
-        rt.execute(f"poke({ACTORS + 0x70}, u32le(9999))")  # actor 数量离谱
+        rt.execute(f"poke({PLAYERS + 132}, u32le(9999))")
         self._cfg("recon")
         self._load(rt)
         self.assertIn("异常", self._status())
@@ -209,9 +204,7 @@ class TestCrashSafety(unittest.TestCase):
 
         rt = self._rt()
         (self.dir / "bridge_config.lua").write_text(
-            render_bridge_config({"mode": "live", "port": 47781, "interval": 0.2,
-                                  "offsets": {"hp": 0x2C, "hp_max": 0x30, "limb_mask": 0x38,
-                                              "limb_shift": 0, "dead": -1}}),
+            render_bridge_config({"mode": "live", "port": 47781, "interval": 0.2}),
             encoding="utf-8")
         self._load(rt)
         log = (self.dir / "hd2_coyote_bridge.log").read_text(encoding="utf-8")
@@ -220,8 +213,8 @@ class TestCrashSafety(unittest.TestCase):
         self.assertNotIn("按纯文本", log)
         self.assertEqual(rt.eval("EXPORTS.config.port"), 47781)
         self.assertAlmostEqual(rt.eval("EXPORTS.config.interval"), 0.2)
-        self.assertEqual(rt.eval("EXPORTS.profiles['steam_25480438'].hp"), 0x2C)
-        self.assertIsNone(rt.eval("EXPORTS.profiles['steam_25480438'].dead"))
+        self.assertEqual(rt.eval("EXPORTS.profiles['steam_25480438'].health.global"), 53634696)
+        self.assertEqual(rt.eval("EXPORTS.profiles['steam_25480438'].players.global"), 53634152)
 
     def test_plain_text_with_comments_and_quotes(self) -> None:
         rt = self._rt()
@@ -291,8 +284,8 @@ class TestCrashSafety(unittest.TestCase):
         status = self._status()
         self.assertTrue(status.startswith("OK - "), status)
         report = (self.dir / "recon_report.txt").read_text(encoding="utf-8")
-        self.assertIn("local_player_entity=4242", report)
-        self.assertIn("anchor_hex_dump:", report)
+        self.assertIn("local_avatar_entity=4242", report)
+        self.assertIn("health=OK hp=62/100", report)
         self.assertGreater(rt.eval("FAKE_PEEK_CALLS"), 0)
 
     def test_private_ffi_names_used(self) -> None:

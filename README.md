@@ -52,7 +52,7 @@ Web 控制台负责操作控制器，**不是**手机扫码连接的 WebSocket �
 - Hook 路线需要《绝地潜兵 2》、[Bingus Shared Loader](https://github.com/CowboyBingus/Helldivers2ModLoader) 及兼容的 mod 管理器。
 - [Mod Options Menu](https://github.com/CowboyBingus/ModOptionsMenu) 是可选的游戏内连接信息与日志菜单，不是 Web 控制台的前置依赖。
 
-> 没有游戏或设备也可以完成 mock 自测。**安装成功、离线测试通过，不代表当前游戏构建的字段偏移已经适配。**
+> 没有游戏或设备也可以完成 mock 自测。0.5.6 内置游戏构建 `1.8.46015.0` 的自动读取 profile；**安装成功、离线测试通过仍不等于真实游戏读数已经在你的机器上核对。**
 
 ## 快速开始
 
@@ -109,7 +109,7 @@ python -m venv .venv
 
 | 路线 | 适用场景 | 必须注意 |
 | --- | --- | --- |
-| `game_bridge`（默认） | 通过游戏内 Lua 桥读取血量、损伤与阵亡状态 | 依赖社区加载器和构建对应的偏移；存在崩溃、卡死或反作弊风险 |
+| `game_bridge`（默认） | 通过游戏内 Lua 桥自动读取血量、六肢损伤与阵亡状态 | 依赖社区加载器和受支持的游戏构建；构建不匹配会拒绝读取，仍存在崩溃、卡死或反作弊风险 |
 
 也可启用 `http` 事件源接收外部结构化状态/事件，或与游戏桥合流。详见 [事件源文档](docs/SOURCES.md)。
 
@@ -117,7 +117,7 @@ python -m venv .venv
 
 ### 2. Hook 路线：安装并验证游戏内桥
 
-**先保持 mock 模式或不连接真机**，不要用人体反馈判断偏移是否正确。
+**先保持 Mock 且未武装**，不要用人体反馈判断游戏数据是否正确。
 
 ```powershell
 ./.venv/Scripts/python.exe -m hd2coyote doctor
@@ -126,9 +126,9 @@ python -m venv .venv
 
 1. 打包产物为 `build/HD2-Coyote-Bridge-<VERSION>.zip`，版本号来自 [VERSION](VERSION)。将 ZIP 用 Arsenal / HD2 Mod Manager 导入、启用、Deploy，然后重启游戏。
 2. **桥默认是 `safe`，不是 `recon` 或 `live`**：只写日志，不读取游戏内存、不发 UDP、不注册菜单。先确认 addon 加载成功。
-3. 按 [Hook 文档第 9 节](docs/HOOK.md#9-模式阶梯与两起真实事故必读) 逐级验证：`safe → net → menu → recon → live`。`net` 检查通信，`menu` 检查菜单，`recon` 收集字段定位证据。
-4. 在任务内进行 recon，结合真实血量变化核对 `hp` / `hp_max` 等字段，再填写偏移；**不要照抄示例偏移**。游戏更新后需要重新确认，不能假定只做一次就永久有效。
-5. 确认状态读数与实际一致后才切 `live`。在 Web 控制台点击「开始检测」，检查受伤、阵亡与复活是否正确；真机连接留到下一步。
+3. 按 [Hook 文档第 9 节](docs/HOOK.md#9-模式阶梯与两起真实事故必读) 逐级验证：`safe → net → menu → recon → live`。`net` 检查通信，`menu` 检查菜单，`recon` 一次性验证构建、本地 Avatar 与生命记录。
+4. 0.5.6 无需填写偏移。`live` 会校验受支持构建后自动读取；游戏更新导致指纹不匹配时应等待新 profile，不要手填地址绕过。
+5. 使用 Mock、保持未武装，确认桌面端显示的血量、受伤、阵亡与复活均与游戏一致后，才进入下一步连接真机。
 
 **配置统一在桌面 / Web 控制台或桥配置文件中修改，修改后需重启游戏。** 游戏内 MODS 菜单只显示连接信息和最近日志，不再提供配置控制项；重新打开 ESC 刷新信息。
 诊断区可以查看实际运行档位、状态与 recon 报告。详细步骤见 [Hook 文档](docs/HOOK.md)。

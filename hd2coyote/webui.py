@@ -48,9 +48,6 @@ LOGGER = logging.getLogger("hd2coyote.webui")
 
 BRIDGE_MODES = ("safe", "net", "menu", "recon", "live")
 BRIDGE_DEFAULT_DIR = Path.home() / "AppData" / "Local" / "hd2coyote"
-OFFSET_KEYS = {"hp": 0x20, "hp_max": 0x24, "limb_mask": 0x28, "limb_shift": 0, "dead": 0x2C}
-OFFSET_RANGE = {"hp": (-1, 0xFFFF), "hp_max": (-1, 0xFFFF), "limb_mask": (-1, 0xFFFF),
-                "limb_shift": (0, 7), "dead": (-1, 0xFFFF)}
 
 
 def is_loopback(addr: str) -> bool:
@@ -85,33 +82,16 @@ def render_bridge_config(values: dict[str, Any]) -> str:
     if not re.fullmatch(r"[A-Za-z0-9_]+", profile):   # 注意：Python 正则，不是 Lua 的 %w
         raise ValueError("profile 只能包含字母/数字/下划线")
 
-    offsets = values.get("offsets") or {}
-    lines = []
-    for key in ("hp", "hp_max", "limb_mask", "limb_shift", "dead"):
-        raw = offsets.get(key, OFFSET_KEYS[key])
-        value = int(raw)
-        lo, hi = OFFSET_RANGE[key]
-        if not lo <= value <= hi:
-            raise ValueError(f"{key} 必须在 {lo}..{hi}")
-        if key == "limb_shift":
-            lines.append(f"      limb_shift = {value},")
-        else:
-            lines.append(f"      {key} = {'nil' if value < 0 else hex(value)},")
-
     return (
-        "-- 由 hd2-coyote Web 控制台生成（改完重启游戏生效）\n"
-        "-- 档位：safe(只写日志) / net(+UDP) / menu(+游戏内菜单) / recon(内存侦察) / live\n"
+        "-- 由 hd2-coyote 桌面端生成（改完重启游戏生效）\n"
+        "-- live 会按内置、经构建指纹校验的 profile 自动读取；不接受手填内存偏移。\n"
+        "-- 档位：safe(只写日志) / net(+UDP) / menu(+游戏内菜单) / recon(只读诊断) / live\n"
         "return {\n"
         "  config = {\n"
         f"    mode = '{mode}',\n"
         f"    port = {port},\n"
         f"    interval = {interval},\n"
         f"    profile = '{profile}',\n"
-        "  },\n"
-        "  profiles = {\n"
-        f"    {profile} = {{\n"
-        + "\n".join(lines) + "\n"
-        "    },\n"
         "  },\n"
         "}\n"
     )
@@ -120,7 +100,7 @@ def render_bridge_config(values: dict[str, Any]) -> str:
 def parse_bridge_config(text: str) -> dict[str, Any]:
     """从 bridge_config.lua 里粗略读出关键值（只用于页面回显，不做求值）。"""
     out: dict[str, Any] = {"mode": "safe", "port": 47777, "interval": 0.1,
-                           "profile": "steam_25480438", "offsets": dict(OFFSET_KEYS)}
+                           "profile": "steam_25480438"}
     m = re.search(r"mode\s*=\s*'([A-Za-z0-9_]+)'", text)
     if m:
         out["mode"] = m.group(1)
@@ -133,12 +113,6 @@ def parse_bridge_config(text: str) -> dict[str, Any]:
     m = re.search(r"profile\s*=\s*'([A-Za-z0-9_]+)'", text)
     if m:
         out["profile"] = m.group(1)
-    for key in ("hp", "hp_max", "limb_mask", "limb_shift", "dead"):
-        m = re.search(rf"^\s*{key}\s*=\s*(nil|0x[0-9A-Fa-f]+|\d+)", text, re.MULTILINE)
-        if not m:
-            continue
-        raw = m.group(1)
-        out["offsets"][key] = -1 if raw == "nil" else int(raw, 0)
     return out
 
 
@@ -561,7 +535,6 @@ class WebApp:
             "port": payload.get("port", 47777),
             "interval": payload.get("interval", 0.1),
             "profile": payload.get("profile", "steam_25480438"),
-            "offsets": payload.get("offsets") or {},
         }
         path = write_bridge_config(values, self.bridge_cfg_dir)
         return {"ok": True, "path": str(path), "content": path.read_text(encoding="utf-8"),
@@ -856,7 +829,7 @@ def run_web(cfg: AppConfig, config_path: Path, host: str = "127.0.0.1", port: in
     httpd, app = build_server(cfg, config_path, host, port, bridge_cfg_dir)
     url = f"http://{host if host != '0.0.0.0' else '127.0.0.1'}:{port}/"
     print(f"hd2-coyote Web 控制台：{url}")
-    print("  · 页面里可以：看状态、调强度、改桥的档位/偏移、看日志与部署自检")
+    print("  · 页面里可以：看状态、调强度、改桥的档位、看日志与部署自检")
     print("  · 桥的配置改完需要重启游戏生效；控制器动作（急停/测试脉冲）立即生效")
     print("  · 退出：网页右上角「关闭程序」，或在本窗口按 Ctrl+C")
     if host == "0.0.0.0":

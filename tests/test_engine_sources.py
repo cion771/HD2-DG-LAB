@@ -104,8 +104,10 @@ class TestBridgeDeadman(unittest.TestCase):
         self.engine.start()
         self.assertTrue(wait_for(lambda: self.engine.hook is not None), "桥没起来")
         self.engine.arm()
+        # HookSource 对象在线不等于 UDP 线程已经 bind 完成；先确认基线包确实入队，
+        # 避免整套测试高负载时首包在 bind 前发出造成偶发失败。
         self.send(1.00)
-        time.sleep(0.15)
+        self.assertTrue(wait_for(lambda: self.engine.status.hook_alive), "基线状态包未收到")
         self.send(0.70)                               # 掉血 → 触发伤害规则
         self.assertTrue(wait_for(lambda: self.engine.device.peak_strength > 0),
                         "游戏桥事件没有产生输出")

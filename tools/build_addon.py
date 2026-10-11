@@ -194,7 +194,7 @@ def build(args: argparse.Namespace) -> Path:
     print(f"  资源            {resource}（{len(patch_bytes)} 字节）")
     print(f"  裸归档（手工安装用）：{patch_file}（+ 两个 0 字节 sidecar）")
     print(f"\n安装：在 Arsenal / HD2 Mod Manager 里导入上面的 ZIP，启用后 Deploy。")
-    print(f"验证：`python tools\\inspect_game_patches.py` 应显示 ✅ 已部署；")
+    print("验证：`python tools\\inspect_game_patches.py` 应显示 [OK] 已部署；")
     print(f"      游戏启动后加载器日志里应出现 {resource}: loaded")
     return zip_path
 

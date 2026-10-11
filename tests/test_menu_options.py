@@ -48,18 +48,7 @@ class TestInGameMenu(unittest.TestCase):
     def _rt(self, menu: bool = True, hp: float = 62.0):
         rt = lj.LuaRuntime()
         rt.execute(FAKE.read_text(encoding="utf-8"))
-        for addr, expr in (
-            (BASE + 0x3326d20, f"u64le({ACTORS})"),
-            (ACTORS + 0x70, "u32le(1)"),
-            (ACTORS + 0x110, f"u64le({PINGREC})"),
-            (PINGREC + 8, "u32le(4242)"),
-            (PINGREC + 16, "u32le(7)"),
-            (PINGREC + 0x20, f"f32le({hp})"),
-            (PINGREC + 0x24, "f32le(100.0)"),
-            (PINGREC + 0x28, "string.char(3)"),
-            (PINGREC + 0x2C, "string.char(0)"),
-        ):
-            rt.execute(f"poke({addr}, {expr})")
+        rt.execute(f"seed_current_game({int(hp)}, 3, 0)")
         rt.execute("__hd2_tick = function() end")
         if menu:
             rt.execute("ModOptionsMenu = make_fake_menu()")
@@ -145,7 +134,9 @@ class TestInGameMenu(unittest.TestCase):
         self.assertEqual(rt.eval("EXPORTS.config.interval"), 0.1)
         self.assertTrue(rt.eval("EXPORTS.config.enabled"))
         self.assertTrue(rt.eval("EXPORTS.live.active"))
-        self.assertEqual(rt.eval("EXPORTS.profiles.steam_25480438.hp"), 0x20)
+        self.assertEqual(rt.eval("EXPORTS.profiles.steam_25480438.health.global"), 53634696)
+        self.assertIsNone(rt.eval("EXPORTS.profiles.steam_25480438.hp"),
+                          "旧用户配置里的手填偏移必须被忽略")
         self.assertEqual(rt.eval("EXPORTS.config.frame_hooks[1]"), "__hd2_tick")
         self.assertFalse((self.dir / "recon_report.txt").exists())
         for r in self._registered(rt):
@@ -174,8 +165,7 @@ class TestInGameMenu(unittest.TestCase):
         self._load(rt)
         self.assertIn("STATUS:", self._description(rt, "log1"))
         # Force protected frame errors, exercising the actual bounded log path.
-        rt.execute("EXPORTS.live.P.hp_anchor = 'base'; "
-                   "EXPORTS.live.R.f32 = function() error(string.rep('测试', 500)) end")
+        rt.execute("EXPORTS.live.P.health = nil")
         for _ in range(12):
             rt.execute("EXPORTS.frame_tick()")
         for i in range(1, 7):
