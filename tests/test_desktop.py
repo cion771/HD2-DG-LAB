@@ -171,15 +171,29 @@ class TestNativeHost(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "win32", "Windows mutex")
     def test_single_instance_released(self):
+        import ctypes
+        import uuid
+        from ctypes import wintypes
+
+        # Use a real Windows mutex, but never contend with the user's running controller.
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+        kernel.CreateMutexW.restype = wintypes.HANDLE
+        name = 'Local\\hd2-DG-LAB.test.' + uuid.uuid4().hex
+        isolated = SimpleNamespace(
+            CreateMutexW=Mock(side_effect=lambda attrs, owned, _: kernel.CreateMutexW(attrs, owned, name)),
+            CloseHandle=kernel.CloseHandle,
+        )
         first, second = SingleInstance(), SingleInstance()
-        try:
-            self.assertTrue(first.acquire())
-            self.assertFalse(second.acquire())
-            first.close()
-            self.assertTrue(second.acquire())
-        finally:
-            first.close()
-            second.close()
+        with patch('hd2coyote.desktop.ctypes.WinDLL', return_value=isolated):
+            try:
+                self.assertTrue(first.acquire())
+                self.assertFalse(second.acquire())
+                first.close()
+                self.assertTrue(second.acquire())
+            finally:
+                first.close()
+                second.close()
 
 
 if __name__ == "__main__":

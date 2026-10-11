@@ -18,13 +18,14 @@
 -- 两种模式：
 --   mode = 'recon'  —— 一次性侦察：模块基址、本地玩家锚点、_G 里的候选钩子名，
 --                      并把证据落盘，然后进入终止状态（不周期扫描、不吃帧）。
---   mode = 'live'   —— 按 profile 的偏移以 10Hz 上报状态。
---                      偏移没填齐时拒绝启动并在 STATUS.txt 说明原因（宁可不干活也不猜着读）。
+--   mode = 'live'   —— 自动等待玩家，按 profile 的偏移以 10Hz 上报状态。
+--                      找不到玩家/读取失败时每 3 秒重试，数据恢复后自动继续。
+--                      偏移没填齐时拒绝启动；不自动猜测偏移、不扫描整个地址空间。
 --
 -- 偏移是"某个游戏构建"的快照，游戏更新会漂移：先跑 recon，更新后重跑 recon。
 
 local ADDON = 'mods/hd2coyote/hd2_coyote_bridge'
-local VERSION = '0.5.4'   -- 必须与仓库根的 VERSION 文件一致（打包时会校验）
+local VERSION = '0.5.5'   -- 必须与仓库根的 VERSION 文件一致（打包时会校验）
 local PROTOCOL = 1
 
 --------------------------------------------------------------------- 配置
@@ -573,13 +574,15 @@ local function read_state(R, P, player)
     if P.hp_max then
         local MR = anchor_reader(R, P, player, 'hp_max_anchor')
         local v = MR and MR.f32(P.hp_max)
-        if v and v > 0 and v <= 1e9 then hp_max = v end
+        if not v or v <= 0 or v > 1e9 then return nil, 'HP_MAX_INVALID' end
+        hp_max = v
     end
 
     local limbs = { 0, 0, 0 }
     if P.limb_mask then
         local LR = anchor_reader(R, P, player, 'limb_anchor')
         local mask = LR and LR.u8(P.limb_mask)
+        if mask == nil then return nil, 'LIMB_READ_FAILED' end
         if mask then
             if P.limb_mask_bits then
                 for i, bit in ipairs(P.limb_mask_bits) do
@@ -599,14 +602,16 @@ local function read_state(R, P, player)
     if P.bleeding then
         local BR = anchor_reader(R, P, player, 'bleeding_anchor')
         local v = BR and BR.u8(P.bleeding)
-        if v then bleeding = (v ~= 0) and 1 or 0 end
+        if v ~= 0 and v ~= 1 then return nil, 'BLEEDING_INVALID' end
+        bleeding = v
     end
 
     local dead = 0
     if P.dead then
         local DR = anchor_reader(R, P, player, 'dead_anchor')
         local v = DR and DR.u8(P.dead)
-        if v then dead = (v ~= 0) and 1 or 0 end
+        if v ~= 0 and v ~= 1 then return nil, 'DEAD_INVALID' end
+        dead = v
     end
 
     return { hp = hp, hp_max = hp_max, limbs = limbs, bleeding = bleeding, dead = dead }
@@ -785,7 +790,16 @@ end
 
 --------------------------------------------------------------------- live
 local live = { active = false, last = 0, player = nil, failures = 0, last_relocate = 0,
-               R = nil, P = nil, base = nil }
+               R = nil, P = nil, base = nil, ready = false, wait_reason = nil }
+
+-- 仅在状态变化时写日志；定位失败按固定间隔退避，不逐帧扫描。
+local function wait_for_player(why)
+    live.ready = false
+    if live.wait_reason ~= why then
+        live.wait_reason = why
+        status(false, 'live 自动等待玩家数据（每 3 秒重试）：' .. tostring(why))
+    end
+end
 
 local function live_step()
     local R, P = live.R, live.P
@@ -794,25 +808,30 @@ local function live_step()
     if now - live.last < CONFIG.interval * 1000 then return end
     live.last = now
 
+    if not live.player then
+        if now - live.last_relocate < 3000 then return end
+        live.last_relocate = now
+        local player, why = locate_local_player(R, P)
+        if not player then
+            wait_for_player(why)
+            return
+        end
+        live.player = player
+    end
+
     local st, why = read_state(R, P, live.player)
     if not st then
         live.failures = live.failures + 1
-        if live.failures == 5 then
-            log('读取失败 ' .. tostring(why) .. '，尝试重新定位本地玩家')
-        end
-        -- 退避重定位：每 3 秒一次，失败就继续跑（不刷屏、不写内存）
-        if now - live.last_relocate > 3000 then
-            live.last_relocate = now
-            local p, why2 = locate_local_player(R, P)
-            if p then
-                live.player, live.failures = p, 0
-                log(string.format('重新定位成功 anchor=0x%X', p.address))
-            else
-                live.player = nil
-                log('重新定位失败：' .. tostring(why2))
-            end
-        end
+        -- 丢弃失效锚点，停止 state 上报；心跳不能延长桌面端旧数据的有效期。
+        live.player = nil
+        live.last_relocate = now
+        wait_for_player(why)
         return
+    end
+    if not live.ready then
+        live.ready, live.wait_reason = true, nil
+        status(true, string.format('live 自动读取中（profile=%s hook=%s hp=0x%X）',
+                                  CONFIG.profile, tostring(HOOK.name or '?'), P.hp))
     end
     live.failures = 0
     send(json({
@@ -845,13 +864,15 @@ local function start_live()
     live.R = live.R or reader(live.base)
     live.P = P
     local player, why = locate_local_player(live.R, P)
+    local now = now_ms()
+    live.player, live.active, live.last = player, true, now
+    live.last_relocate, live.ready, live.wait_reason = now, false, nil
     if not player then
-        status(false, 'live 模式定位不到本地玩家：' .. tostring(why))
-        return false
+        wait_for_player(why)
+    else
+        status(true, string.format('live 自动读取已启动，等待首个有效状态（profile=%s hook=%s hp=0x%X）',
+                                   CONFIG.profile, tostring(HOOK.name or '?'), P.hp))
     end
-    live.player, live.active, live.last = player, true, now_ms()
-    status(true, string.format('live 已启动（profile=%s hook=%s hp=0x%X）',
-                               CONFIG.profile, tostring(HOOK.name or '?'), P.hp))
     return true
 end
 
@@ -1013,16 +1034,8 @@ local function main()
 
     live.P = P
     live.player = player
-    if start_live() then return end
-    -- live 起不来（多半是偏移没填）：退回一次性采样，并把原因写进 STATUS
-    if player then
-        local st = read_state(R, P, player)
-        if st then
-            send(json({ { 'v', PROTOCOL }, { 'ev', 'state' }, { 't', now_ms() / 1000 },
-                        { 'hp', st.hp }, { 'hp_max', st.hp_max }, { 'limbs', st.limbs },
-                        { 'bleeding', st.bleeding }, { 'dead', st.dead } }))
-        end
-    end
+    -- 只有启动校验通过才进入自动读取；失败时不伪造一次性 state。
+    start_live()
 end
 
 local ok, err = pcall(main)

@@ -223,6 +223,54 @@ class TestLuaAddon(unittest.TestCase):
         self.assertEqual(payload["dead"], 0)
         self.assertEqual(payload["v"], 1)
 
+    def test_live_waits_for_late_player_and_recovers_after_loss(self) -> None:
+        rt = self._rt()
+        rt.execute('__hd2_test_tick = function() end')
+        self._write_user_config('live')
+        self._load(rt)
+        self.assertTrue(self.exports['live']['active'])
+        self.assertFalse(self.exports['live']['ready'])
+        rt.execute('for i=1,8 do __hd2_test_tick() end')
+        self.assertFalse(any('"ev":"state"' in s for s in lua_list(rt, 'FAKE_SENT')))
+        self._memory(rt)
+        rt.execute('for i=1,8 do __hd2_test_tick() end')
+        self.assertTrue(self.exports['live']['ready'])
+        self.assertTrue(any('"ev":"state"' in s for s in lua_list(rt, 'FAKE_SENT')))
+        rt.execute('FAKE_REGIONS = {}; FAKE_SENT = {}; __hd2_test_tick()')
+        self.assertFalse(self.exports['live']['ready'])
+        self.assertIsNone(self.exports['live']['player'])
+        self.assertFalse(any('"ev":"state"' in s for s in lua_list(rt, 'FAKE_SENT')))
+        self._memory(rt, hp=100.0)
+        rt.execute('for i=1,8 do __hd2_test_tick() end')
+        self.assertTrue(self.exports['live']['ready'])
+
+    def test_configured_unreadable_fields_do_not_send_state(self) -> None:
+        for field, offset in [('hp_max', 0x24), ('limb_mask', 0x28), ('dead', 0x2C), ('bleeding', 0x2D)]:
+            with self.subTest(field=field):
+                rt = self._rt()
+                self._memory(rt)
+                rt.execute('__hd2_test_tick = function() end')
+                self._write_user_config('live')
+                self._load(rt)
+                rt.execute(f'for i=#FAKE_REGIONS,1,-1 do '
+                           f'if FAKE_REGIONS[i].addr == {PINGREC + offset} then '
+                           'table.remove(FAKE_REGIONS,i) end end; FAKE_SENT = {}; __hd2_test_tick()')
+                self.assertFalse(self.exports['live']['ready'])
+                self.assertFalse(any('"ev":"state"' in s for s in lua_list(rt, 'FAKE_SENT')))
+
+    def test_live_retry_is_bounded_and_does_not_repeat_logs(self) -> None:
+        rt = self._rt()
+        rt.execute('__hd2_test_tick = function() end')
+        self._write_user_config('live')
+        self._load(rt)
+        # Hold the test clock steady: no pointer scan on each frame.
+        rt.execute('FAKE_TICK = -100000')
+        queries = rt.eval('FAKE_VQ_CALLS')
+        before = (self.dir / 'hd2_coyote_bridge.log').stat().st_size
+        rt.execute('for i=1,20 do __hd2_test_tick() end')
+        self.assertEqual(rt.eval('FAKE_VQ_CALLS'), queries)
+        self.assertEqual((self.dir / 'hd2_coyote_bridge.log').stat().st_size, before)
+
     def test_missing_frame_hook_reports_failed(self) -> None:
         rt = self._rt()
         self._memory(rt)
