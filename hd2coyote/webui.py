@@ -403,8 +403,12 @@ class WebApp:
                     "qr_url": qr_url,
                 },
                 "hook": {
-                    "alive": st.hook_alive,
-                    "detail": st.hook_detail,
+                    "alive": bool(hook and hook.alive),  # 仅有效游戏状态续期
+                    "connected": bool(hook and hook.connected),
+                    "listening": bool(hook and hook._sock is not None),
+                    "mode": hook.state.mode if hook else '',
+                    "detail": hook.describe() if hook else (
+                        '尚未监听游戏桥：请启用 game_bridge 并点击开始检测（无需武装或连接真实设备）。'),
                     "version": getattr(hook, "state", None) and hook.state.version or "",
                     "build": getattr(hook, "state", None) and hook.state.build or "",
                     "profile": getattr(hook, "state", None) and hook.state.profile or "",

@@ -38,7 +38,10 @@ class HookState:
     """最近一次收到的状态（UI 与日志都看它）。"""
 
     t: float = 0.0
-    received: float = 0.0
+    received: float = 0.0  # 最近有效 state；心跳绝不能续期游戏状态
+    transport_received: float = 0.0
+    mode: str = ""
+    bridge_detail: str = ""
     hp: float | None = None
     hp_max: float = 100.0
     limbs: list[int] = field(default_factory=list)
@@ -103,6 +106,12 @@ class HookSource:
         """状态流是否还在（超时 = addon 挂了 / 退出了游戏）。"""
         return self.state.age <= max(0.5, self.hook_cfg.timeout_s)
 
+    @property
+    def connected(self) -> bool:
+        """收到合法心跳/状态，仅代表桥可达，不代表游戏状态可用。"""
+        stamp = self.state.transport_received
+        return bool(stamp and time.monotonic() - stamp <= max(3.0, self.hook_cfg.timeout_s))
+
     # ------------------------------------------------------------- 接收
     def _recv_loop(self) -> None:
         assert self._sock is not None
@@ -116,10 +125,20 @@ class HookSource:
             except Exception as exc:  # 不允许因为单个坏包退出
                 self.log.debug("UDP 接收异常：%s", exc)
                 continue
+            packet = self._decode(data)
             with self._lock:
-                # 到达时间按「收到」算，而不是等 poll() 处理 —— 否则断流判定会滞后
-                self.state.received = time.monotonic()
-                self._queue.append({"_raw": data})
+                if packet is None:
+                    self.state.bad_packets += 1
+                    continue
+                received = time.monotonic()
+                if packet['ev'] == 'bye':
+                    self.state.received = self.state.transport_received = 0.0
+                else:
+                    self.state.transport_received = received
+                    if packet['ev'] == 'state':
+                        self.state.received = received
+                self._queue.append({"packet": packet, "received": received})
+                del self._queue[:-256]
 
     # ------------------------------------------------------------- 处理
     def poll(self, now: float | None = None) -> list[Event]:
@@ -129,11 +148,8 @@ class HookSource:
             pending, self._queue = self._queue, []
         events: list[Event] = []
         for item in pending:
-            packet = self._decode(item["_raw"])
-            if packet is None:
-                self.state.bad_packets += 1
-                continue
-            events.extend(self._handle(packet, now))
+            # 处理积压包不能把旧包变成新状态。
+            events.extend(self._handle(item['packet'], item['received']))
         return events
 
     def _decode(self, raw: bytes) -> dict | None:
@@ -143,15 +159,36 @@ class HookSource:
         except Exception:
             self.log.debug("收到无法解析的数据包（%d 字节）", len(raw))
             return None
-        if not isinstance(packet, dict) or int(packet.get("v", 0)) != PROTOCOL_VERSION:
+        if not isinstance(packet, dict) or type(packet.get('v')) is not int or packet['v'] != PROTOCOL_VERSION:
             return None
+        if packet.get('ev') not in ('hello', 'heartbeat', 'state', 'bye'):
+            return None
+        if packet['ev'] == 'state':
+            import math
+            try:
+                hp = float(packet['hp'])
+                maximum = float(packet.get('hp_max', 100.0))
+                if not math.isfinite(hp) or not math.isfinite(maximum) or maximum <= 0:
+                    return None
+                if not isinstance(packet.get('limbs', []), list):
+                    return None
+            except (ValueError, TypeError, KeyError, OverflowError):
+                return None
         return packet
 
     def _handle(self, packet: dict, now: float) -> list[Event]:
         kind = str(packet.get("ev", ""))
         self.state.packets += 1
 
-        if kind == "hello":
+        if kind in ('hello', 'heartbeat'):
+            self.state.transport_received = now
+            self.state.mode = str(packet.get('mode', ''))
+            self.state.bridge_detail = str(packet.get('detail', ''))[:400]
+            if kind == 'heartbeat':
+                self.state.build = str(packet.get('build', self.state.build))
+                self.state.version = str(packet.get('ver', self.state.version))
+                self.state.profile = str(packet.get('profile', self.state.profile))
+                return []
             self.hello = packet
             self.state.build = str(packet.get("build", ""))
             self.state.version = str(packet.get("ver", ""))
@@ -169,7 +206,7 @@ class HookSource:
 
         if kind == "bye":
             self.log.warning("游戏内 addon 已退出")
-            self.state.received = 0.0
+            self.state.received = self.state.transport_received = 0.0
             return []
 
         if kind != "state":
@@ -202,9 +239,12 @@ class HookSource:
     # ------------------------------------------------------------- 展示
     def describe(self) -> str:
         s = self.state
-        if s.received == 0.0:
-            return (f"等待游戏内 addon（UDP {self.hook_cfg.host}:{self.hook_cfg.port} "
-                    f"未收到数据）")
+        if not self.alive:
+            if self.connected:
+                detail = s.bridge_detail or '没有有效玩家状态；menu/recon 不持续上报血量，live 还需有效偏移'
+                return f"桥在线（mode={s.mode or '?'}），游戏数据未就绪：{detail}"
+            return (f"等待游戏桥（UDP {self.hook_cfg.host}:{self.hook_cfg.port}）；"
+                    "先开始检测。旧版只发送一次 hello，可能需要先开控制器再重启游戏。")
         hp = "--" if s.hp is None else f"{s.hp * 100:5.1f}%"
         limbs = "".join(str(v) for v in s.limbs) or "-"
         return (f"HP={hp} 肢体={limbs} 流血={'是' if s.bleeding else '否'} "

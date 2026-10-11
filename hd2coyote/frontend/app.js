@@ -80,8 +80,9 @@ function render(s) {
   text('serviceStatus',c.running ? '检测中' : '待机'); text('serviceDetail','控制服务在线 · 仅本机界面'); $('serviceDot').className = 'status-dot';
   text('pollState','刚刚同步'); setBadge('sessionBadge',c.running ? '检测运行中' : '控制器待机',c.running ? 'good' : 'quiet');
   const receiving = c.running && (c.sources || []).some(source => source.alive);
-  text('bridgeStatus',c.running ? (receiving ? '正在接收' : '等待数据') : '尚未检测');
-  text('bridgeDetail',h.detail || '启动检测后等待游戏数据'); $('bridgeDot').className = 'status-dot' + (receiving ? '' : ' neutral');
+  const bridgeData = c.running && h.alive;
+  text('bridgeStatus',!h.listening ? '未监听游戏桥' : bridgeData ? '游戏状态在线' : h.connected ? '桥在线 · 数据未就绪' : '等待桥心跳');
+  text('bridgeDetail',h.detail || '请启用游戏桥事件源并开始检测；无需武装输出。'); $('bridgeDot').className = 'status-dot' + (bridgeData ? '' : ' neutral');
   const mock = /mock/i.test(d.kind); text('deviceStatus',mock ? 'Mock 模拟' : d.connected ? '已连接' : '未连接');
   text('deviceDetail',mock ? '不连接真实硬件' : d.connected ? 'DG-LAB App 在线' : '在设备页连接手机');
   $('deviceDot').className = 'status-dot' + (d.connected ? '' : ' neutral'); setBadge('dev',mock ? 'Mock 模拟设备' : d.connected ? '已连接' : '未连接',d.connected ? 'good' : 'quiet');

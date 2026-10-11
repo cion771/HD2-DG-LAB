@@ -24,7 +24,7 @@
 -- 偏移是"某个游戏构建"的快照，游戏更新会漂移：先跑 recon，更新后重跑 recon。
 
 local ADDON = 'mods/hd2coyote/hd2_coyote_bridge'
-local VERSION = '0.5.3'   -- 必须与仓库根的 VERSION 文件一致（打包时会校验）
+local VERSION = '0.5.4'   -- 必须与仓库根的 VERSION 文件一致（打包时会校验）
 local PROTOCOL = 1
 
 --------------------------------------------------------------------- 配置
@@ -133,7 +133,10 @@ local function log(msg, force)
     if not wrote then pcall(print, '[hd2coyote] ' .. tostring(msg)) end
 end
 
+local bridge_detail = 'starting'
 local function status(ok, reason)
+    -- 只经本机心跳传简短状态，不传日志路径、报告或内存内容。
+    bridge_detail = tostring(reason)
     local head = (ok and 'OK - ' or 'FAILED - ') .. tostring(reason)
     if STATUS_PATH then
         file_write(STATUS_PATH, head .. '\n' .. string.format(
@@ -857,8 +860,22 @@ end
 -- 包装规则（照抄参考里的要求）：参数与返回值原样透传，自己的错误不许影响下面。
 HOOK = { name = nil, prev = nil, installed = false, active = true }
 
+local last_heartbeat = nil
+local function heartbeat_tick()
+    if not net.ready or CONFIG.mode == 'safe' then return end
+    local now = now_ms()
+    if last_heartbeat and now - last_heartbeat < 1000 then return end
+    last_heartbeat = now
+    local P = PROFILES[CONFIG.profile] or {}
+    send(json({ { 'v', PROTOCOL }, { 'ev', 'heartbeat' }, { 'ver', VERSION },
+                { 'build', P.build or '' }, { 'profile', CONFIG.profile },
+                { 'mode', CONFIG.mode }, { 'detail', bridge_detail:sub(1, 300) } }))
+end
+
 local function frame_tick()
     if not HOOK.active then return end
+    local hb_ok, hb_err = pcall(heartbeat_tick)
+    if not hb_ok then log('heartbeat tick 异常：' .. tostring(hb_err)) end
     local ok, err = pcall(menu_tick)
     if not ok then log('菜单 tick 异常：' .. tostring(err)) end
     if CONFIG.enabled and live.active then
