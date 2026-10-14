@@ -11,8 +11,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
     & $python -m PyInstaller --noconfirm --clean desktop.spec
     if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed.' }
-    Get-FileHash 'dist/HD2-DG-LAB.exe' -Algorithm SHA256
-    Write-Host 'Created dist/HD2-DG-LAB.exe. No config or runtime logs are bundled.'
+    $version = (Get-Content 'VERSION' -Raw).Trim()
+    $exe = "dist/HD2-DG-LAB-$version.exe"
+    Get-FileHash $exe -Algorithm SHA256
+    Write-Host "Created $exe. No config or runtime logs are bundled."
 } finally {
     Pop-Location
 }

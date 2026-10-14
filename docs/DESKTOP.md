@@ -6,7 +6,7 @@
 ## 运行 EXE
 
 1. 使用 Windows 10/11 x64，安装 Microsoft Edge WebView2 Evergreen Runtime（微软官方发行版；不随本程序捆绑）。
-2. 构建产物为 `dist/HD2-DG-LAB.exe`，双击即可运行，不需要安装 Python。
+2. 构建产物为 `dist/HD2-DG-LAB-<VERSION>.exe`（例如 `HD2-DG-LAB-0.6.2.exe`），文件名直接标明版本；双击即可运行，不需要安装 Python。
 3. 首次在「设备连接」把设备类型切为 **Mock** 并保存，先完成无硬件自测。
 4. 程序启动时**不启动设备、不开始检测、保持解除武装**。主页“启动检查向导”只读检查安全边界、设备、检测和事件数据，绝不替用户武装。
 5. 在“强度与规则”中可设置固定伤害合并窗口及 A/B 独立倍率；这些倍率最终仍受百分比和绝对强度上限约束。
@@ -30,8 +30,8 @@
 可从终端显式选用配置（不要同时运行旧控制器）：
 
 ```powershell
-./dist/HD2-DG-LAB.exe --config ./my-config.json
-./dist/HD2-DG-LAB.exe --data-dir ./desktop-data --bridge-dir ./bridge-config
+./dist/HD2-DG-LAB-0.6.2.exe --config ./my-config.json
+./dist/HD2-DG-LAB-0.6.2.exe --data-dir ./desktop-data --bridge-dir ./bridge-config
 ```
 
 自定义数据目录建议放在仓库外；它不一定被 Git 忽略。打包脚本只按白名单收集前端和程序资源，不带本机配置、连接信息或运行日志。
@@ -71,7 +71,7 @@ python -m venv build/desktop-venv
 ./build/desktop-venv/Scripts/python.exe -m pip install -r requirements-desktop.txt
 ./build/desktop-venv/Scripts/python.exe tools/release_acceptance.py
 ./build/desktop-venv/Scripts/python.exe -m PyInstaller --noconfirm --clean desktop.spec
-Get-FileHash ./dist/HD2-DG-LAB.exe -Algorithm SHA256
+Get-FileHash ./dist/HD2-DG-LAB-0.6.2.exe -Algorithm SHA256
 ```
 
 产物只有一个 EXE（首次启动会在系统临时目录解包，可能稍慢）。不自动发布 GitHub，不要求管理员权限。

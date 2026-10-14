@@ -1,8 +1,10 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-if exist "dist\HD2-DG-LAB.exe" (
-    start "" "dist\HD2-DG-LAB.exe"
+set "VERSION="
+if exist "VERSION" set /p VERSION=<"VERSION"
+if defined VERSION if exist "dist\HD2-DG-LAB-%VERSION%.exe" (
+    start "" "dist\HD2-DG-LAB-%VERSION%.exe"
     exit /b 0
 )
 set "PY="

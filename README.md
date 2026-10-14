@@ -48,7 +48,7 @@ Fluent 桌面版负责操作控制器；其内嵌本地界面**不是**手机扫
 
 ## 使用前准备
 
-- **桌面 EXE**：Windows 10/11 x64 + Microsoft Edge WebView2 Runtime；不需要 Python。构建与启动见 [桌面文档](docs/DESKTOP.md)。
+- **桌面 EXE**：Windows 10/11 x64 + Microsoft Edge WebView2 Runtime；不需要 Python。发布文件按 `HD2-DG-LAB-<VERSION>.exe` 命名，下载时可直接核对版本。构建与启动见 [桌面文档](docs/DESKTOP.md)。
 - **从源码运行 Fluent 桌面版**：Windows + Python 3.10 或更高版本、Microsoft Edge WebView2 Runtime；安装 Python 时勾选加入 PATH。
 - 安装依赖时需要联网；使用 Git 克隆则还需要 Git，也可下载仓库 ZIP。
 - 真机反馈需要 **郊狼 Coyote 3.0、DG-LAB 手机 App**，以及手机与电脑互通的可信局域网。

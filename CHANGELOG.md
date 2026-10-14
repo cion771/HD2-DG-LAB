@@ -5,6 +5,12 @@
 
 ---
 
+## 0.6.2
+
+- Windows 发布版 EXE 改为 `HD2-DG-LAB-<VERSION>.exe`，文件名直接标明程序版本，便于并存、核对和回滚。
+- PyInstaller spec 从仓库 `VERSION` 自动生成文件名；`build-desktop.ps1`、`run.bat`、桌面文档和更新说明同步适配版本化名称。
+- 发布验收矩阵的 AUT-06 现在要求 EXE 文件名版本与 Release 版本完全一致；未带版本号或版本不匹配的 EXE 会阻断发布。
+
 ## 0.6.1
 
 - 新增 `docs/RELEASE_ACCEPTANCE.md` 发布验收矩阵，明确区分自动门禁与 Windows、游戏、Mock、真机、回滚等人工验收，未执行项必须保留为 `PENDING` 或注明 `N/A` 原因。

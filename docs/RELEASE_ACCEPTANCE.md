@@ -19,7 +19,7 @@
 | AUT-03 | 源码 | 前端语法 | `node --check` 返回 0 | 校验器输出 | 是 |
 | AUT-04 | 隐私 | Git 跟踪清单 | 不跟踪真实配置、日志、`ref/`、构建目录或转储 | `git ls-files` 审计 | 是 |
 | AUT-05 | 文档 | 必需文档 | README、安全、第三方、变更、桌面、Hook、更新/回滚、验收矩阵均存在 | 文件清单 | 是 |
-| AUT-06 | 构建 | Fluent EXE | 文件存在、体积合理、PE 头为 `MZ` | 文件名与字节数 | 是 |
+| AUT-06 | 构建 | Fluent EXE | `HD2-DG-LAB-<VERSION>.exe` 存在、版本与 `VERSION` 完全一致、体积合理、PE 头为 `MZ` | 文件名与字节数 | 是 |
 | AUT-07 | 构建 | 游戏桥 ZIP | ZIP 可读取，含 manifest、`data/*.patch_0`，`Options[].Include=["data"]` | ZIP 结构检查 | 是 |
 | AUT-08 | 构建 | 发布文档 | 发布目录含桌面、Hook、更新/回滚、验收矩阵及 Release Notes | 文件清单 | 是 |
 | AUT-09 | 完整性 | SHA-256 | `SHA256SUMS.txt` 覆盖所有应发布资产且哈希完全匹配 | 哈希复算 | 是 |

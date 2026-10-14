@@ -140,8 +140,13 @@ def _parse_sums(path: Path) -> dict[str, str]:
     return values
 
 
+def desktop_exe_name(version: str) -> str:
+    """Return the versioned desktop artifact name required by Releases."""
+    return f"HD2-DG-LAB-{version}.exe"
+
+
 def check_artifacts(dist: Path, version: str) -> list[Result]:
-    exe = dist / "HD2-DG-LAB.exe"
+    exe = dist / desktop_exe_name(version)
     bridge = dist / f"HD2-Coyote-Bridge-{version}.zip"
     exe_header = b""
     if exe.is_file():

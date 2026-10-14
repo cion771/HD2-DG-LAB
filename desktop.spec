@@ -4,6 +4,8 @@ import sys
 from PyInstaller.utils.hooks import copy_metadata
 
 root = Path(SPECPATH)
+version = (root / "VERSION").read_text(encoding="utf-8").strip()
+exe_name = f"HD2-DG-LAB-{version}"
 datas = [(str(root / "hd2coyote" / "frontend"), "hd2coyote/frontend")]
 for name in ("LICENSE", "THIRD_PARTY.md", "SAFETY.md", "VERSION"):
     datas.append((str(root / name), "."))
@@ -28,7 +30,7 @@ a = Analysis(
 pyz = PYZ(a.pure)
 exe = EXE(
     pyz, a.scripts, a.binaries, a.datas, [],
-    name="HD2-DG-LAB", debug=False, bootloader_ignore_signals=False,
+    name=exe_name, debug=False, bootloader_ignore_signals=False,
     strip=False, upx=False, console=False,
     disable_windowed_traceback=False,
 )

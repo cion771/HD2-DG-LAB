@@ -29,10 +29,13 @@ class TestReleaseAcceptance(unittest.TestCase):
         self.assertIn("PENDING", report)
         self.assertIn("不代表实机、真机或人体安全验收", report)
 
+    def test_desktop_exe_name_includes_exact_version(self) -> None:
+        self.assertEqual(acceptance.desktop_exe_name("1.2.3"), "HD2-DG-LAB-1.2.3.exe")
+
     def test_artifact_matrix_accepts_complete_release_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             dist = Path(tmp)
-            exe = dist / "HD2-DG-LAB.exe"
+            exe = dist / "HD2-DG-LAB-1.2.3.exe"
             with exe.open("wb") as handle:
                 handle.write(b"MZ")
                 handle.seek(1024 * 1024)
@@ -56,6 +59,18 @@ class TestReleaseAcceptance(unittest.TestCase):
             results = acceptance.check_artifacts(dist, "1.2.3")
             self.assertTrue(results)
             self.assertTrue(all(row.status == "PASS" for row in results), results)
+
+    def test_unversioned_desktop_exe_fails_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            dist = Path(tmp)
+            exe = dist / "HD2-DG-LAB.exe"
+            with exe.open("wb") as handle:
+                handle.write(b"MZ")
+                handle.seek(1024 * 1024)
+                handle.write(b"\0")
+            result = next(row for row in acceptance.check_artifacts(dist, "1.2.3") if row.check_id == "AUT-06")
+            self.assertEqual(result.status, "FAIL")
+            self.assertIn("HD2-DG-LAB-1.2.3.exe", result.evidence)
 
     def test_checksum_mismatch_fails_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
