@@ -24,7 +24,7 @@
 -- 构建不匹配就拒绝读取，不接受用户手填偏移，也不扫描整个地址空间。
 
 local ADDON = 'mods/hd2coyote/hd2_coyote_bridge'
-local VERSION = '0.5.8'   -- 必须与仓库根的 VERSION 文件一致（打包时会校验）
+local VERSION = '0.5.9'   -- 必须与仓库根的 VERSION 文件一致（打包时会校验）
 local PROTOCOL = 1
 
 --------------------------------------------------------------------- 配置
@@ -223,7 +223,7 @@ local function parse_plain_config(text)
 end
 
 -- 跳过开头的空行与 `--` 注释行。
--- ★ 踩过的坑：Web 控制台生成的文件以注释开头，而我原来只看"第一个非空 token 是不是
+-- ★ 踩过的坑：Fluent 界面生成的文件以注释开头，而我原来只看"第一个非空 token 是不是
 --   return"，`--` 不是字母 → 被判成纯文本 → mode 变成带引号的 "'menu'" → 未知档位 → 回退 safe。
 local function strip_leading_comments(text)
     local rest = text:gsub('^%s+', '')

@@ -2,7 +2,7 @@
 
 **《绝地潜兵 2》× 郊狼 DG-LAB：把受伤、肢体损伤与阵亡事件转换为设备反馈。**
 
-面向 Windows 的控制器，带可双击运行的 **Fluent 桌面 EXE**，同时保留本地 Web 控制台：查看游戏状态、调整规则与强度、管理波形，并通过 DG-LAB 手机 App 连接郊狼 Coyote 3.0。
+面向 Windows 的控制器，使用可双击运行的 **Fluent 桌面 EXE** 查看游戏状态、调整规则与强度、管理波形，并通过 DG-LAB 手机 App 连接郊狼 Coyote 3.0。纯 Web 运行模式已移除。
 仓库名为 **hd2-DG-LAB**，Python 模块与游戏内桥仍使用 `hd2coyote` / `HD2-Coyote-Bridge`，命令中无需改名。
 
 [桌面版使用与打包](docs/DESKTOP.md) · [快速开始](#快速开始) · [连接游戏与设备](#连接游戏与设备) · [常见问题](#常见问题) · [隐私与发布检查](#隐私与发布检查) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/cion771/hd2-DG-LAB/issues)
@@ -17,10 +17,10 @@
 | 功能 | 说明 |
 | --- | --- |
 | 游戏事件反馈 | 受伤、肢体损伤、阵亡；低血量反馈默认关闭 |
-| Fluent 桌面 / Web | 浅色与深色界面，状态卡片、规则调节、测试脉冲、桥配置与诊断 |
+| Fluent 桌面 | 浅色与深色界面，状态卡片、规则调节、测试脉冲、桥配置与诊断 |
 | 结构化状态来源 | 游戏内 Lua 桥与可选 HTTP 事件源；不抓屏、不做 OCR 或像素识别 |
 | 可扩展事件源 | 游戏桥 UDP 与 HTTP 事件源可合流，统一经过规则与安全层 |
-| 波形库 | 内置预设、命名波形、网页编辑，以及 `pulse_data` JSON 导入/导出 |
+| 波形库 | 内置预设、命名波形、桌面界面编辑，以及 `pulse_data` JSON 导入/导出 |
 | 惩罚累积 | 按事件与缺失血量增加反馈，支持封顶和回落；默认关闭 |
 | 输出保护 | 百分比/绝对强度双重上限、急停、关键状态源断流静音；会话预算需自行开启 |
 | 检查更新 | 查询 GitHub Releases，只提示版本和链接，不自动下载安装 |
@@ -41,16 +41,16 @@
 ```
 
 已移除旧截图识别与标定管线；没有游戏时可用 Mock 和合成状态进行自测。
-Web 控制台负责操作控制器，**不是**手机扫码连接的 WebSocket 服务。
+Fluent 桌面版负责操作控制器；其内嵌本地界面**不是**手机扫码连接的 WebSocket 服务。
 
 ## 使用前准备
 
 - **桌面 EXE**：Windows 10/11 x64 + Microsoft Edge WebView2 Runtime；不需要 Python。构建与启动见 [桌面文档](docs/DESKTOP.md)。
-- **源码 / Web**：Windows + Python 3.10 或更高版本，安装 Python 时勾选加入 PATH。
+- **从源码运行 Fluent 桌面版**：Windows + Python 3.10 或更高版本、Microsoft Edge WebView2 Runtime；安装 Python 时勾选加入 PATH。
 - 安装依赖时需要联网；使用 Git 克隆则还需要 Git，也可下载仓库 ZIP。
 - 真机反馈需要 **郊狼 Coyote 3.0、DG-LAB 手机 App**，以及手机与电脑互通的可信局域网。
 - Hook 路线需要《绝地潜兵 2》、[Bingus Shared Loader](https://github.com/CowboyBingus/Helldivers2ModLoader) 及兼容的 mod 管理器。
-- [Mod Options Menu](https://github.com/CowboyBingus/ModOptionsMenu) 是可选的游戏内连接信息与日志菜单，不是 Web 控制台的前置依赖。
+- [Mod Options Menu](https://github.com/CowboyBingus/ModOptionsMenu) 是可选的游戏内连接信息与日志菜单，不是 Fluent 桌面版的前置依赖。
 
 > 没有游戏或设备也可以完成 mock 自测。0.5.6 内置游戏构建 `1.8.46015.0` 的自动读取 profile；**安装成功、离线测试通过仍不等于真实游戏读数已经在你的机器上核对。**
 
@@ -58,7 +58,7 @@ Web 控制台负责操作控制器，**不是**手机扫码连接的 WebSocket �
 
 从 [Releases](https://github.com/cion771/hd2-DG-LAB/releases) 下载 EXE 后可直接双击运行，先在「设备连接」选择 Mock。桌面版默认使用独立配置、保持解除武装，不会自动开始检测。详见 [桌面文档](docs/DESKTOP.md)。
 
-以下是源码 / Web 路线，命令在 **PowerShell** 中运行。已有源码可从第 2 步开始。
+以下是从源码运行桌面版的路线，命令在 **PowerShell** 中运行。已有源码可从第 2 步开始。
 
 ### 1. 获取源码
 
@@ -73,7 +73,7 @@ cd hd2-DG-LAB
 
 ```powershell
 python -m venv .venv
-./.venv/Scripts/python.exe -m pip install -r requirements.txt
+./.venv/Scripts/python.exe -m pip install -r requirements-desktop.txt
 ```
 
 下面直接调用虚拟环境的 Python，**无需激活环境，也无需修改 PowerShell 执行策略**。
@@ -90,14 +90,13 @@ python -m venv .venv
 观察终端中的事件与模拟输出，约 15 秒后结束。**不要加 `--socket`**，该参数会切换为真实设备连接。
 这一步验证的是模拟链路，不验证游戏内桥的真实偏移。
 
-### 4. 打开控制台
+### 4. 打开 Fluent 桌面版
 
 ```powershell
-./.venv/Scripts/python.exe -m hd2coyote web
+./.venv/Scripts/python.exe -m hd2coyote desktop
 ```
 
-浏览器会打开 **<http://127.0.0.1:8787/>**。若没有自动打开，手动访问即可。
-双击 [run.bat](run.bat) 则启动 **桌面版**（优先本地 EXE，否则安装桌面依赖并从源码启动）。Web 与桌面使用不同默认配置目录，不要同时运行它们连接设备。
+也可双击 [run.bat](run.bat)：优先启动本地 EXE，否则安装桌面依赖并从源码启动。程序使用独立窗口和本机应用数据目录；不再提供固定端口的纯 Web 模式。
 
 首次先查看页面，不要急着启动设备、开始检测或发送测试脉冲。
 需要继续无硬件联调时，在「设备连接」将设备类型选择为 **Mock** 并保存；保存会停止当前连接与检测。
@@ -130,7 +129,7 @@ python -m venv .venv
 4. 0.5.6 无需填写偏移。`live` 会校验受支持构建后自动读取；游戏更新导致指纹不匹配时应等待新 profile，不要手填地址绕过。
 5. 使用 Mock、保持未武装，确认桌面端显示的血量、受伤、阵亡与复活均与游戏一致后，才进入下一步连接真机。
 
-**配置统一在桌面 / Web 控制台或桥配置文件中修改，修改后需重启游戏。** 游戏内 MODS 菜单只显示连接信息和最近日志，不再提供配置控制项；重新打开 ESC 刷新信息。
+**配置统一在 Fluent 桌面版或桥配置文件中修改，修改后需重启游戏。** 游戏内 MODS 菜单只显示连接信息和最近日志，不再提供配置控制项；重新打开 ESC 刷新信息。
 诊断区可以查看实际运行档位、状态与 recon 报告。详细步骤见 [Hook 文档](docs/HOOK.md)。
 
 ### 3. 连接手机与郊狼
@@ -145,7 +144,7 @@ python -m venv .venv
 
 | 用途 | 默认地址/端口 | 访问范围 |
 | --- | --- | --- |
-| Web 控制台 | `http://127.0.0.1:8787/` | 仅电脑本机；可控制实际输出 |
+| Fluent 内嵌界面 | `127.0.0.1` 随机端口 | 仅供当前桌面进程的 WebView2 使用，不对外提供固定入口 |
 | 游戏桥状态 | UDP `127.0.0.1:47777` | 游戏与控制器之间的本机通信 |
 | 手机扫码连接 | WebSocket `9999`，默认监听 `0.0.0.0` | 手机访问电脑的局域网地址；不是 `127.0.0.1` |
 | HTTP 事件源（可选） | `http://127.0.0.1:47778/` | 默认本机，启用该源后使用 |
@@ -155,17 +154,9 @@ python -m venv .venv
 
 ### 急停与退出
 
-- **Fluent 桌面热键**：默认 **F11** 在后台全局暂停/恢复检测（不会改变当前武装状态）；仅桌面 EXE 注册该热键，纯 Web 模式不注册。
-- **急停**：网页「急停」或 Fluent 桌面默认全局热键 **F12**，静音并解除武装；确认问题排除后再点「重新武装」。App 的 **1 号反馈按钮**也可切换急停/恢复，避免误触恢复。
-- **桌面退出**：窗口 × / Alt+F4 或页面「关闭程序」会尝试停止本实例与设备；在 App 核对输出已停止。
-- **Web 正常退出**：优先用网页「关闭程序」，程序会尝试归零、清空波形并断开设备。**只关浏览器标签页不会停止后台控制器。**
-- **Web 命令退出**（不针对随机端口的桌面实例）：双击 [stop.bat](stop.bat)，或执行以下命令：
-
-```powershell
-./.venv/Scripts/python.exe -m hd2coyote stop --no-force
-```
-
-`--no-force` 只请求正常退出；不带该参数或使用 [stop.bat](stop.bat) 时，失败后可能强制结束进程。
+- **Fluent 桌面热键**：默认 **F11** 在后台全局暂停/恢复检测（不会改变当前武装状态）。
+- **急停**：界面「急停」或全局热键 **F12** 会静音并解除武装；确认问题排除后再点「重新武装」。App 的 **1 号反馈按钮**也可切换急停/恢复，避免误触恢复。
+- **桌面退出**：窗口 × / Alt+F4 或界面「关闭程序」会尝试归零、清空波形、停止本实例与设备；随后在 App 核对输出已停止。
 **强杀、断网或程序卡死不能保证归零指令已送达**，请在 App/设备端确认输出已停止；必要时直接关闭设备。
 
 ## 事件与强度
@@ -201,7 +192,7 @@ python -m venv .venv
 - **惩罚累积**：默认关闭；启用后按事件和缺失血量增加请求强度，再按时间回落，仍受双重限幅。配置项位于 `ramp`。
 - **检查更新**：手动查询 GitHub Releases，不覆盖本地文件。若尚未发布 Release，查询不到版本不代表安装失败。
 
-界面面板与 API 见 [Web 控制台文档](docs/WEBUI.md)。
+界面面板与内嵌 API 见 [Fluent 界面文档](docs/WEBUI.md)。
 
 ## 常用命令
 
@@ -209,13 +200,11 @@ python -m venv .venv
 
 ```powershell
 ./.venv/Scripts/python.exe -m hd2coyote desktop              # Fluent 桌面（需桌面依赖）
-./.venv/Scripts/python.exe -m hd2coyote web                  # Web 控制台
-./.venv/Scripts/python.exe -m hd2coyote ui                   # Tkinter 桌面界面
+./.venv/Scripts/python.exe -m hd2coyote ui                   # 旧 Tkinter 桌面界面
 ./.venv/Scripts/python.exe -m hd2coyote doctor               # 环境与桥诊断
 ./.venv/Scripts/python.exe -m hd2coyote run --mock           # mock 接收事件，不连硬件
 ./.venv/Scripts/python.exe -m hd2coyote simulate --seconds 15 # 合成画面自测
 ./.venv/Scripts/python.exe -m hd2coyote waves                # 查看内置波形
-./.venv/Scripts/python.exe -m hd2coyote stop --no-force      # 正常关闭 Web 控制台
 ./.venv/Scripts/python.exe -m hd2coyote update --check --repo cion771/hd2-DG-LAB
 ```
 
@@ -232,10 +221,10 @@ Hook 无游戏联调：在一个终端运行 `run --mock`，另一个终端运�
 | 现象 | 排查方法 |
 | --- | --- |
 | 双击后提示缺少 Python 或模块 | 确认 Python 3.10+ 已加入 PATH；若复用了旧虚拟环境，按快速开始重新安装依赖 |
-| 控制台打不开 | 确认程序仍在运行；检查 8787 端口占用，也可用 `web --port 8788`，退出命令需使用同一端口 |
+| Fluent 窗口打不开 | 检查 Microsoft Edge WebView2 Runtime，并查看 `%LOCALAPPDATA%/hd2-DG-LAB/desktop.log` |
 | 等待 Lua 桥上报 | 先看运行档位：`safe` 不发 UDP 是正常行为；运行 `doctor`，确认 addon 加载且双方端口一致 |
 | recon 找不到玩家或状态异常 | 在任务内验证；检查当前构建与 profile 是否匹配，不猜偏移，不连接真机继续试 |
-| 网页改了桥配置却没生效 | 重启游戏，并在诊断区核对实际运行档位；游戏内菜单只读，不会覆盖文件配置 |
+| 桌面版改了桥配置却没生效 | 重启游戏，并在诊断区核对实际运行档位；游戏内菜单只读，不会覆盖文件配置 |
 | 游戏崩溃或黑屏 | 先急停并断开设备，再通过 mod 管理器禁用本桥并重新部署；按 Hook 文档的回退流程排查 |
 | 手机扫码失败 | 手机与电脑需互通；检查访客 Wi-Fi 隔离、防火墙、VPN/虚拟网卡及 `device.advertise_ip` |
 | 有事件但没有输出 | 检查武装状态、设备连接、规则开关、冷却和 App 通道上限；不要直接提高强度排错 |
@@ -245,7 +234,7 @@ Hook 无游戏联调：在一个终端运行 `run --mock`，另一个终端运�
 
 ## 隐私与发布检查
 
-游戏桥默认只向本机发 UDP；手机连接在局域网内。**这不代表所有功能都离线**：安装依赖会访问包源，检查更新会访问 GitHub。请保持 Web 控制台与 HTTP 事件源默认的本机监听，不要将能触发设备输出的接口暴露到公网。
+游戏桥默认只向本机发 UDP；Fluent 内嵌服务只绑定回环随机端口；手机连接在局域网内。**这不代表所有功能都离线**：安装依赖会访问包源，检查更新会访问 GitHub。请保持 HTTP 事件源默认的本机监听，不要将能触发设备输出的接口暴露到公网。
 
 ## 开发与文档
 
@@ -253,7 +242,7 @@ Hook 无游戏联调：在一个终端运行 `run --mock`，另一个终端运�
 | --- | --- |
 | [Hook 文档](docs/HOOK.md) | 桥原理、模式阶梯、偏移验证、诊断与回退 |
 | [Fluent 桌面](docs/DESKTOP.md) | EXE、源码启动、独立数据目录与打包 |
-| [Web 控制台](docs/WEBUI.md) | 面板、API、配置与关闭行为 |
+| [Fluent 界面与内嵌 API](docs/WEBUI.md) | 面板、桌面内部 API、配置与关闭行为 |
 | [事件源](docs/SOURCES.md) | HTTP 协议、状态包与自定义源 |
 | [核心代码](hd2coyote/) | 检测、规则、波形、安全层与设备协议 |
 | [Lua 桥](lua/hd2_coyote_bridge.lua) / [工具](tools/) | 游戏内 addon、打包与模拟工具 |

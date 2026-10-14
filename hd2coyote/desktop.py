@@ -38,7 +38,7 @@ class DesktopSession:
         self._hotkeys: HotkeyWatcher | None = None
 
     def start_hotkeys(self) -> None:
-        """为 Fluent 桌面宿主启用全局热键；Web 模式不会隐式注册。"""
+        """为 Fluent 桌面宿主启用全局热键。"""
         with self._close_lock:
             if self._closed:
                 raise RuntimeError("桌面会话已经关闭")
@@ -154,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data-dir", help="桌面日志与 WebView2 数据目录")
     args = parser.parse_args(argv)
     if sys.platform != "win32":
-        notify_error("桌面 EXE 需要 Windows 10/11；其他系统请使用 Web 模式。")
+        notify_error("Fluent 桌面版需要 Windows 10/11 和 Microsoft Edge WebView2 Runtime。")
         return 1
     instance = SingleInstance()
     try:

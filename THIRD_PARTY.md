@@ -7,7 +7,7 @@
 | 组件 | 作者 | 许可 | 本项目如何使用 |
 |---|---|---|---|
 | [Bingus Shared Loader](https://github.com/CowboyBingus/Helldivers2ModLoader) | CowboyBingus | 见其仓库 | 社区加载器。本项目的 Lua 桥作为它的 addon 运行（`data/9ba626afa44a3aa3.patch_N` + `-- HD2-Addon:` 头）。 |
-| [Mod Options Menu](https://github.com/CowboyBingus/ModOptionsMenu) | CowboyBingus | 0BSD | 桥的 `menu` 档会向它注册选项。**可选**：Web 控制台不依赖它。 |
+| [Mod Options Menu](https://github.com/CowboyBingus/ModOptionsMenu) | CowboyBingus | 0BSD | 桥的 `menu` 档会向它注册选项。**可选**：Fluent 桌面版不依赖它。 |
 | [Mod Bindings Menu](https://github.com/CowboyBingus/ModBindingsMenu) | CowboyBingus | 见其仓库 | 仅参考其按键绑定挂载方式，未对接。 |
 
 ## 参考实现

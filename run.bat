@@ -22,6 +22,6 @@ if errorlevel 1 (
 if errorlevel 1 goto fail
 exit /b 0
 :fail
-echo Desktop startup failed. See docs\DESKTOP.md for setup and Web fallback.
+echo Desktop startup failed. See docs\DESKTOP.md and install Microsoft Edge WebView2 Runtime.
 pause
 exit /b 1

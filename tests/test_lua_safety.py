@@ -194,7 +194,7 @@ class TestCrashSafety(unittest.TestCase):
         self.assertIn("未找到用户配置", log)
 
     def test_webui_generated_config_is_parsed_as_lua(self) -> None:
-        """回归：Web 控制台写出的文件以 `--` 注释开头 —— 必须仍按 Lua 形式解析。
+        """回归：Fluent 界面写出的文件以 `--` 注释开头 —— 必须仍按 Lua 形式解析。
 
         （之前只看"第一个非空 token 是否 return"，`--` 不是字母 → 误判成纯文本 →
           mode 变成带引号的 "'live'" → 未知档位 → 回退 safe。用户看到的现象就是

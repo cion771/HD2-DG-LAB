@@ -22,13 +22,8 @@ from . import __version__
 from .config import AppConfig
 from .waves import PRESETS, build
 
-# engine / safety 是重依赖（设备连接需要 websockets），
-# 而 `stop` 这种命令完全用不到它们 —— 所以在函数内部按需导入，
-# 这样"关掉控制器"永远不依赖游戏识别/设备栈是否装好。
-
-# ⚠️ `from .device import ...` 会连带导入 websockets —— 而 `stop` 之类的命令根本不需要它。
-#    所以改成用到时再导入（惰性），这样没装 websockets 的 Python 也能执行 stop/doctor 的一部分，
-#    而且 `python -m hd2coyote stop` 的启动更快。
+# engine / safety 是重依赖（设备连接需要 websockets），因此在函数内部按需导入。
+# ⚠️ `from .device import ...` 会连带导入 websockets；doctor 等轻量命令不应提前加载设备栈。
 DEFAULT_CONFIG = "config.json"
 
 
@@ -77,23 +72,6 @@ def cmd_desktop(args: argparse.Namespace) -> int:
     return desktop_main(argv)
 
 
-def cmd_web(args: argparse.Namespace) -> int:
-    cfg = load_config(args.config)
-    from .webui import run_web
-
-    run_web(cfg, Path(args.config), host=args.host, port=args.port,
-            bridge_cfg_dir=args.bridge_dir or None, open_browser=not args.no_browser)
-    return 0
-
-
-def cmd_stop(args: argparse.Namespace) -> int:
-    """关闭正在运行的 Web 控制台（先优雅退出，必要时强杀）。"""
-    from .console_ctl import stop_console
-
-    closed, _ = stop_console(host=args.host, port=args.port, force=not args.no_force)
-    return 0 if closed else 1
-
-
 def cmd_ui(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     from .ui import run_ui
@@ -121,7 +99,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     if "http" in cfg.sources.enabled:
         token = "（需要 X-HD2Coyote-Token）" if cfg.sources.http_token else ""
         print(f"  HTTP 上报：POST http://{cfg.sources.http_host}:{cfg.sources.http_port}/event{token}")
-        print("  例子：见 docs/SOURCES.md，或 Web 控制台的「事件源」面板")
+        print("  例子：见 docs/SOURCES.md，或 Fluent 桌面版的「事件源」面板")
     print("检测中…… Ctrl+C 退出")
     try:
         while True:
@@ -277,19 +255,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--bridge-dir", default=None)
     p.add_argument("--data-dir", default=None)
     p.set_defaults(func=cmd_desktop)
-
-    p = sub.add_parser("web", parents=[common], help="Web 控制台（浏览器）")
-    p.add_argument("--host", default="127.0.0.1", help="监听地址（默认只监听本机）")
-    p.add_argument("--port", type=int, default=8787)
-    p.add_argument("--bridge-dir", default="", help="桥的配置目录（默认 %%LOCALAPPDATA%%\\hd2coyote）")
-    p.add_argument("--no-browser", action="store_true", help="不要自动打开浏览器")
-    p.set_defaults(func=cmd_web)
-
-    p = sub.add_parser("stop", help="关闭正在运行的 Web 控制台")
-    p.add_argument("--host", default="127.0.0.1")
-    p.add_argument("--port", type=int, default=8787)
-    p.add_argument("--no-force", action="store_true", help="优雅退出失败时不要强杀进程")
-    p.set_defaults(func=cmd_stop)
 
     p = sub.add_parser("run", parents=[common], help="命令行运行")
     p.add_argument("--mock", action="store_true", help="不接硬件，打印输出")

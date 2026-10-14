@@ -1,8 +1,8 @@
-"""Web 控制台：用浏览器管理 hd2-coyote（状态 / 强度 / 桥配置 / 诊断）。
+"""Fluent 桌面版的内嵌控制服务（状态 / 强度 / 桥配置 / 诊断）。
 
 设计取舍：
-  * 只用标准库（`http.server` + 内联 HTML/JS），**不引任何前端依赖**，离线可用；
-  * 默认只监听 127.0.0.1 —— 这个页面能触发实际输出，别裸奔到局域网；
+  * 只用标准库提供桌面 WebView2 所需的本地页面和 API，前端离线可用；
+  * 仅由桌面宿主绑定 127.0.0.1 随机端口，不提供独立浏览器运行模式；
   * 桥（游戏内 Lua）的配置是**文件**，改完要重启游戏才生效；页面里会明确提示；
   * 诊断区直接给 addon 的 STATUS / 日志尾部 / 加载器日志行 —— 这几轮排查都靠它们。
 
@@ -29,7 +29,6 @@ import logging
 import re
 import threading
 import time
-import webbrowser
 from dataclasses import asdict
 from functools import wraps
 from urllib.parse import urlsplit
@@ -332,7 +331,7 @@ class WebApp:
         self.update_result: dict[str, Any] | None = None
         # 手动注入用：HTTP 源没启用时，自己留一个只做解析的实例（不监听端口）
         self._manual_source: HttpEventSource | None = None
-        # 「关闭程序」：置位后由服务器主循环退出（见 build_server / run_web）
+        # 「关闭程序」：置位后由 Fluent 桌面宿主和内嵌服务器退出。
         self.shutdown_event = threading.Event()
         self.shutdown_reason = ""
 
@@ -561,7 +560,7 @@ class WebApp:
             self._note("控制台：重新武装")
             return {"ok": True, "detail": "已重新武装"}
         if name == "trip":
-            engine.trip("Web 控制台急停")
+            engine.trip("Fluent 界面急停")
             self._note("控制台：急停（需重新武装才恢复输出）")
             return {"ok": True, "detail": "已急停（需重新武装才恢复输出）"}
         if name == "test_pulse":
@@ -579,7 +578,7 @@ class WebApp:
             self._note("控制台：启动设备")
             return {"ok": True, "detail": "设备已启动（可用二维码连接手机 App）"}
         if name == "shutdown":
-            return self.close(str(payload.get("reason", "Web 控制台")), delay=0.6)
+            return self.close(str(payload.get("reason", "Fluent 桌面版")), delay=0.6)
         raise ValueError(f"未知动作：{name}")
 
     @mutating
@@ -829,6 +828,9 @@ HTTP_USAGE_EXAMPLE: dict[str, Any] = {
 
 def build_server(cfg: AppConfig, config_path: Path, host: str, port: int,
                  bridge_cfg_dir: str | Path | None = None) -> tuple[ThreadingHTTPServer, WebApp]:
+    """创建桌面内嵌服务；拒绝绑定非回环地址。"""
+    if not is_loopback(host):
+        raise ValueError("Fluent 内嵌服务只允许绑定本机回环地址")
     app = WebApp(cfg, config_path, bridge_cfg_dir)
     handler = type("BoundHandler", (_Handler,), {"app": app})
     httpd = ThreadingHTTPServer((host, port), handler)
@@ -837,7 +839,7 @@ def build_server(cfg: AppConfig, config_path: Path, host: str, port: int,
     def watchdog() -> None:
         """等「关闭程序」的请求，然后让 serve_forever 返回（主线程收尾）。"""
         app.shutdown_event.wait()
-        LOGGER.info("收到关闭请求（%s），正在退出", app.shutdown_reason or "Web 控制台")
+        LOGGER.info("收到关闭请求（%s），正在退出", app.shutdown_reason or "Fluent 桌面版")
         try:
             httpd.shutdown()
         except Exception:  # 服务器可能已经关了
@@ -845,29 +847,6 @@ def build_server(cfg: AppConfig, config_path: Path, host: str, port: int,
 
     threading.Thread(target=watchdog, name="shutdown-watchdog", daemon=True).start()
     return httpd, app
-
-
-def run_web(cfg: AppConfig, config_path: Path, host: str = "127.0.0.1", port: int = 8787,
-            bridge_cfg_dir: str | Path | None = None, open_browser: bool = True) -> None:
-    httpd, app = build_server(cfg, config_path, host, port, bridge_cfg_dir)
-    url = f"http://{host if host != '0.0.0.0' else '127.0.0.1'}:{port}/"
-    print(f"hd2-coyote Web 控制台：{url}")
-    print("  · 页面里可以：看状态、调强度、改桥的档位、看日志与部署自检")
-    print("  · 桥的配置改完需要重启游戏生效；控制器动作（急停/测试脉冲）立即生效")
-    print("  · 退出：网页右上角「关闭程序」，或在本窗口按 Ctrl+C")
-    if host == "0.0.0.0":
-        print("  ⚠️ 你把它开在了所有网卡上 —— 这个页面能触发实际输出，公网/宿舍网请勿如此")
-    if open_browser:
-        threading.Thread(target=lambda: (time.sleep(0.6), webbrowser.open(url)),
-                         daemon=True).start()
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        print("\n收到 Ctrl+C，正在停止……")
-    finally:
-        app.close("Web 服务退出")
-        httpd.server_close()
-        print("控制器已关闭；已请求停止输出，请在手机 App 核对。")
 
 
 # --------------------------------------------------------------------- 页面

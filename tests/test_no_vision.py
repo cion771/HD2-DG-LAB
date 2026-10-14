@@ -21,8 +21,11 @@ class TestNoVision(unittest.TestCase):
     def test_removed_modules_and_cli_are_unavailable(self):
         self.assertIsNone(importlib.util.find_spec("hd2coyote.capture"))
         self.assertIsNone(importlib.util.find_spec("hd2coyote.hud"))
-        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            build_parser().parse_args(["calibrate"])
+        for removed_command in ("calibrate", "web", "stop"):
+            with self.subTest(command=removed_command), \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                build_parser().parse_args([removed_command])
+        self.assertIsNone(importlib.util.find_spec("hd2coyote.console_ctl"))
         self.assertFalse(hasattr(Engine, "_run_vision"))
 
     def test_api_rejects_vision_without_reconfiguring_engine(self):

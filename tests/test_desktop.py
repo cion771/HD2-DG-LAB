@@ -15,6 +15,7 @@ from unittest.mock import Mock, patch
 from hd2coyote.config import AppConfig
 from hd2coyote.desktop import DesktopSession, SingleInstance, run_desktop
 from hd2coyote.safety import HotkeyWatcher
+from hd2coyote.webui import build_server
 
 
 class TestDesktopSession(unittest.TestCase):
@@ -118,6 +119,11 @@ class TestDesktopSession(unittest.TestCase):
             self.session.close()
             watcher.stop.assert_called_once()
             watcher.join.assert_called_once_with(timeout=1)
+
+    def test_embedded_server_rejects_non_loopback_binding(self):
+        with self.assertRaisesRegex(ValueError, "回环地址"):
+            build_server(self.cfg, self.root / "other.json", "0.0.0.0", 0,
+                         self.root / "other-bridge")
 
     def test_browser_cross_origin_and_rebinding_are_rejected(self):
         port = self.session.server.server_port
