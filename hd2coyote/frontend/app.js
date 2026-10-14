@@ -73,6 +73,15 @@ function renderUpdate(u) {
   const link = $('upLink'); link.hidden = true; link.removeAttribute('href');
   try { const url = new URL(u.latest?.url || u.latest?.html_url); if (url.protocol === 'https:' && url.hostname === 'github.com') { link.href = url.href; link.hidden = false; } } catch (_) {}
 }
+function renderStartup(startup) {
+  if (!startup) return;
+  setBadge('startupReady',startup.ready_to_arm ? '可以手动武装' : '尚未完成',startup.ready_to_arm ? 'good' : 'quiet');
+  const list = $('startupSteps'); list.replaceChildren();
+  Object.values(startup.steps || {}).forEach(step => {
+    const row = node('div','detail-row'); row.append(node('span','',step.label),node('b','',step.ok ? '已通过 · ' + step.detail : '待处理 · ' + step.detail)); list.append(row);
+  });
+  text('startupNote',startup.note || '检查向导不会自动武装输出。');
+}
 function render(s) {
   lastStatus = s; const c = s.controller, d = c.device, h = c.hook;
   online = true; document.body.classList.remove('unavailable'); $('connectionBanner').hidden = true;
@@ -100,7 +109,7 @@ function render(s) {
   const key = d.qr_url || '';
   if (key !== qrKey) { qrKey = key; $('qrwrap').replaceChildren(); if (key) { const img = node('img'); img.alt = 'DG-LAB App 连接二维码，请勿分享'; img.src = '/qr.svg?t=' + Date.now(); img.onerror = () => { img.remove(); $('qrwrap').prepend(node('span','','二维码不可用，请检查设备服务。')); }; $('qrwrap').append(img,node('code','',key)); } }
   if (!key) $('qrwrap').replaceChildren(node('span','',mock ? 'Mock 模式无需扫码，也不会连接真实设备。' : '启动设备服务后，在这里显示连接二维码。'));
-  renderEvents(s.events || []); renderDiagnostics(s.bridge || {}); renderUpdate(s.update || {}); controls();
+  renderEvents(s.events || []); renderDiagnostics(s.bridge || {}); renderUpdate(s.update || {}); renderStartup(s.startup); controls();
 }
 async function refresh() {
   if (closed || closing) return;
@@ -115,7 +124,7 @@ async function loadConfig() {
     check.type = 'checkbox'; check.id = 'r_' + key + '_on'; check.checked = rule.enabled; check.setAttribute('role','switch'); label.append(check,node('span','',RULE_NAMES[key] || key));
     range.type = 'range'; range.id = 'r_' + key; range.min = 0; range.max = Math.max(100,rule.base_pct); range.step = 1; range.value = rule.base_pct; range.setAttribute('aria-label',(RULE_NAMES[key] || key) + '强度'); out.textContent = rule.base_pct + '%'; range.oninput = () => { out.textContent = range.value + '%'; }; row.append(label,range,out); rows.append(row);
   });
-  const fields = {master:cfg.safety.master_multiplier,maxpct:cfg.safety.max_pct,maxabs:cfg.safety.max_absolute,deviceKind:cfg.device.kind,deviceHost:cfg.device.host,devicePort:cfg.device.port,deviceAdvertise:cfg.device.advertise_ip,rpPerEvent:cfg.ramp.per_event,rpHp:cfg.ramp.hp_missing_pct,rpCeil:cfg.ramp.ceiling_pct,rpDecayAfter:cfg.ramp.decay_after_s,rpDecayPer:cfg.ramp.decay_per_s};
+  const fields = {master:cfg.safety.master_multiplier,channelA:cfg.safety.channel_a_multiplier,channelB:cfg.safety.channel_b_multiplier,maxpct:cfg.safety.max_pct,maxabs:cfg.safety.max_absolute,damageWindow:cfg.detect.damage_merge_window_ms,deviceKind:cfg.device.kind,deviceHost:cfg.device.host,devicePort:cfg.device.port,deviceAdvertise:cfg.device.advertise_ip,rpPerEvent:cfg.ramp.per_event,rpHp:cfg.ramp.hp_missing_pct,rpCeil:cfg.ramp.ceiling_pct,rpDecayAfter:cfg.ramp.decay_after_s,rpDecayPer:cfg.ramp.decay_per_s};
   Object.entries(fields).forEach(([id,v]) => { $(id).value = v; }); $('rpOn').checked = cfg.ramp.enabled; $('rpResetOnDeath').checked = cfg.ramp.reset_on_death;
 }
 async function loadBridge() {
@@ -170,7 +179,7 @@ const actions = {
   checkUpdate:async () => { text('upInfo','正在检查 GitHub Releases…'); renderUpdate(await api('/api/update',{})); }
 };
 const forms = {
-  rulesForm:async () => { if (!cfg) throw Error('配置尚未加载'); const rules = {}; Object.keys(cfg.rules).forEach(k => { rules[k] = {enabled:$('r_' + k + '_on').checked,base_pct:number('r_' + k)}; }); await saveConfig({rules,safety:{master_multiplier:number('master'),max_pct:number('maxpct'),max_absolute:number('maxabs')}}); },
+  rulesForm:async () => { if (!cfg) throw Error('配置尚未加载'); const rules = {}; Object.keys(cfg.rules).forEach(k => { rules[k] = {enabled:$('r_' + k + '_on').checked,base_pct:number('r_' + k)}; }); await saveConfig({rules,safety:{master_multiplier:number('master'),channel_a_multiplier:number('channelA'),channel_b_multiplier:number('channelB'),max_pct:number('maxpct'),max_absolute:number('maxabs')},detect:{damage_merge_window_ms:number('damageWindow')}}); },
   deviceForm:async () => { if (!await confirmAction('保存设备设置？','当前检测和连接将停止。保存后需手动重新武装、连接和开始检测。')) return; await saveConfig({device:{kind:value('deviceKind'),host:value('deviceHost').trim(),port:number('devicePort'),advertise_ip:value('deviceAdvertise').trim()}}); },
   rampForm:() => saveConfig({ramp:{enabled:$('rpOn').checked,per_event:number('rpPerEvent'),hp_missing_pct:number('rpHp'),ceiling_pct:number('rpCeil'),decay_after_s:number('rpDecayAfter'),decay_per_s:number('rpDecayPer'),reset_on_death:$('rpResetOnDeath').checked}}),
   waveForm:async () => { const body = {action:'set',name:value('wName').trim(),peak:number('wPeak'),freq:value('wFreq') ? number('wFreq') : null}, units = value('wUnits').split(/[\s,;]+/).filter(Boolean); if (units.length) body.units = units; else body.preset = value('wPreset'); toast((await api('/api/waves',body)).applied); await loadWaves(); },

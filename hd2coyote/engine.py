@@ -344,8 +344,10 @@ class Engine:
                                 self.cfg.safety.release_ms)
 
         lim = self.device.limits
-        value_a = self.safety.strength_for(self._cur_a, lim.a)
-        value_b = self.safety.strength_for(self._cur_b, lim.b)
+        value_a = self.safety.strength_for(
+            self._cur_a, lim.a, self.cfg.safety.channel_a_multiplier)
+        value_b = self.safety.strength_for(
+            self._cur_b, lim.b, self.cfg.safety.channel_b_multiplier)
         if force_zero:
             value_a = value_b = 0
         if value_a != self.status.output_a or value_b != self.status.output_b:

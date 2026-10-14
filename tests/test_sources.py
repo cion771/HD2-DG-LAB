@@ -214,7 +214,7 @@ class TestHttpStateMachine(unittest.TestCase):
         self.assertTrue(rows["game_bridge"]["critical"])
 
     def test_damage_from_hp_drop(self) -> None:
-        _, src = self.make()
+        _, src = self.make(damage_merge_window_ms=0.0)
         t = time.monotonic()
         src.ingest({"hp": 100, "hp_max": 100}, now=t)
         events = src.ingest({"hp": 90, "hp_max": 100}, now=t + 0.1)

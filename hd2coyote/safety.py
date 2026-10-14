@@ -149,17 +149,19 @@ class SafetyGuard:
                 self.log.error("静音失败（请手动断开设备）：%s", exc)
 
     # ------------------------------------------------------------------ 换算
-    def effective_pct(self, pct: float) -> float:
-        """把规则强度换算成最终百分比：乘总倍率，并夹到 max_pct 以内。"""
+    def effective_pct(self, pct: float, channel_multiplier: float = 1.0) -> float:
+        """规则强度 × 总倍率 × 通道倍率，并夹到 ``max_pct`` 以内。"""
         with self._lock:
             if not self._armed:
                 return 0.0
-            pct = max(0.0, float(pct)) * max(0.0, float(self.cfg.master_multiplier))
+            pct = (max(0.0, float(pct))
+                   * max(0.0, float(self.cfg.master_multiplier))
+                   * max(0.0, float(channel_multiplier)))
             return min(pct, max(0.0, float(self.cfg.max_pct)))
 
-    def strength_for(self, pct: float, limit: int) -> int:
-        """百分比 + 通道上限 -> App 强度值。"""
-        eff = self.effective_pct(pct)
+    def strength_for(self, pct: float, limit: int, channel_multiplier: float = 1.0) -> int:
+        """百分比 + 通道倍率 + 通道上限 -> App 强度值。"""
+        eff = self.effective_pct(pct, channel_multiplier)
         value = int(round(limit * eff / 100.0))
         return max(0, min(int(value), int(limit), int(self.cfg.max_absolute)))
 

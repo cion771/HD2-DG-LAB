@@ -13,33 +13,56 @@ class HealthTracker:
         self.cfg = cfg
         self._prev: float | None = None
         self._pending = 0.0
+        self._pending_started: float | None = None
+        self._pending_before: float | None = None
         self._low = False
         self._ignore_until = 0.0
 
+    def _clear_pending(self) -> None:
+        self._pending = 0.0
+        self._pending_started = None
+        self._pending_before = None
+
+    def _flush_due(self, now: float, *, force: bool = False) -> list[Event]:
+        if self._pending_started is None or self._pending_before is None:
+            return []
+        window_s = max(0.0, float(self.cfg.damage_merge_window_ms)) / 1000.0
+        if not force and now < self._pending_started + window_s:
+            return []
+        amount = self._pending
+        before = self._pending_before
+        self._clear_pending()
+        severity = amount * 100.0
+        if severity < max(0.0, float(self.cfg.damage_min_pct)):
+            return []
+        return [Damage(t=now, severity=severity, hp_before=before,
+                       hp_after=max(0.0, before - amount))]
+
     def reset(self) -> None:
         self._prev = None
-        self._pending = 0.0
+        self._clear_pending()
         self._low = False
 
     def ignore_damage_for(self, seconds: float, now: float) -> None:
         self._ignore_until = now + max(0.0, seconds)
+        self._clear_pending()
 
     def update(self, hp: float | None, now: float) -> list[Event]:
+        # 固定窗口不因后续命中而延长；先结算到期窗口，再处理当前样本。
+        events = self._flush_due(now)
         if hp is None:
-            return []
-        events: list[Event] = []
+            return events
         if self._prev is None:
             self._prev = hp
             return events
         delta = self._prev - hp
-        if delta > 0:
+        if delta > 0 and now >= self._ignore_until:
+            if self._pending_started is None:
+                self._pending_started = now
+                self._pending_before = self._prev
             self._pending += delta
-        else:
-            self._pending = 0.0
-        if self._pending * 100.0 >= self.cfg.damage_min_pct and now >= self._ignore_until:
-            events.append(Damage(t=now, severity=self._pending * 100.0,
-                                 hp_before=self._prev, hp_after=hp))
-            self._pending = 0.0
+            if max(0.0, float(self.cfg.damage_merge_window_ms)) == 0.0:
+                events.extend(self._flush_due(now, force=True))
         pct = hp * 100.0
         if not self._low and hp > 0.02 and pct <= self.cfg.low_health_pct:
             self._low = True

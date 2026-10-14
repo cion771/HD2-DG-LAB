@@ -8,21 +8,48 @@ from hd2coyote.events import Damage, Death, LimbInjury, LowHealth, Revive
 
 
 class TestTrackers(unittest.TestCase):
-    def test_damage_accumulates_small_hits(self) -> None:
-        tracker = HealthTracker(DetectConfig(damage_min_pct=4.0))
+    def test_damage_accumulates_in_fixed_window(self) -> None:
+        tracker = HealthTracker(DetectConfig(damage_min_pct=4.0, damage_merge_window_ms=250.0))
         self.assertEqual(tracker.update(1.00, 0.0), [])
         self.assertEqual(tracker.update(0.98, 0.1), [])
-        events = tracker.update(0.94, 0.2)  # 累计 6%
+        self.assertEqual(tracker.update(0.94, 0.2), [])  # 窗口未到，不提前结算
+        events = tracker.update(0.94, 0.36)
         self.assertEqual(len(events), 1)
         self.assertIsInstance(events[0], Damage)
         self.assertAlmostEqual(events[0].severity, 6.0, delta=0.01)
+        self.assertAlmostEqual(events[0].hp_before, 1.0)
+        self.assertAlmostEqual(events[0].hp_after, 0.94)
 
-    def test_heal_resets_pending(self) -> None:
-        tracker = HealthTracker(DetectConfig(damage_min_pct=4.0))
+    def test_window_is_not_sliding(self) -> None:
+        tracker = HealthTracker(DetectConfig(damage_min_pct=1.0, damage_merge_window_ms=250.0))
+        tracker.update(1.00, 0.0)
+        tracker.update(0.98, 0.10)
+        tracker.update(0.96, 0.30)  # 第二次命中不把截止时间推迟到 0.55
+        events = tracker.update(0.96, 0.36)
+        self.assertEqual(len(events), 1)
+        self.assertAlmostEqual(events[0].severity, 4.0, delta=0.01)
+
+    def test_heal_does_not_cancel_window(self) -> None:
+        tracker = HealthTracker(DetectConfig(damage_min_pct=2.0, damage_merge_window_ms=250.0))
         tracker.update(1.00, 0.0)
         tracker.update(0.97, 0.1)
-        tracker.update(1.00, 0.2)  # 回血 -> 丢弃累计
-        self.assertEqual(tracker.update(0.99, 0.3), [])
+        tracker.update(1.00, 0.2)
+        events = tracker.update(1.00, 0.36)
+        self.assertEqual(len(events), 1)
+        self.assertAlmostEqual(events[0].severity, 3.0, delta=0.01)
+
+    def test_zero_window_emits_immediately(self) -> None:
+        tracker = HealthTracker(DetectConfig(damage_min_pct=2.0, damage_merge_window_ms=0.0))
+        tracker.update(1.0, 0.0)
+        events = tracker.update(0.95, 0.1)
+        self.assertEqual(len(events), 1)
+        self.assertAlmostEqual(events[0].severity, 5.0, delta=0.01)
+
+    def test_below_threshold_window_is_discarded(self) -> None:
+        tracker = HealthTracker(DetectConfig(damage_min_pct=4.0, damage_merge_window_ms=100.0))
+        tracker.update(1.0, 0.0)
+        tracker.update(0.98, 0.1)
+        self.assertEqual(tracker.update(0.98, 0.21), [])
 
     def test_low_health_hysteresis(self) -> None:
         from hd2coyote.events import Recovered
@@ -73,8 +100,9 @@ class TestStateEndToEnd(unittest.TestCase):
                 seen.append(type(ev).__name__)
 
         feed(0.0, 1.00)
-        feed(0.1, 0.90)                       # 受伤
+        feed(0.1, 0.90)                       # 受伤，打开固定合并窗口
         feed(0.3, 0.90, (True, False, False))  # 左肢损伤
+        feed(0.4, 0.90, (True, False, False))  # 窗口到期，结算伤害
         feed(2.0, 0.00, (True, False, False), dead=True)   # 阵亡
         feed(4.0, 0.00, (), dead=True)
         feed(6.0, 0.60)                       # 复活

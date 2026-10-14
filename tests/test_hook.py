@@ -24,6 +24,7 @@ def make_cfg() -> AppConfig:
     cfg.hook.port = free_udp_port()
     cfg.hook.timeout_s = 0.4
     cfg.detect.dead_hold_s = 0.15
+    cfg.detect.damage_merge_window_ms = 0.0  # 此文件测 UDP 接线；固定窗口由 test_detectors 覆盖
     cfg.device.kind = "mock"
     return cfg
 

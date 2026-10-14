@@ -22,6 +22,7 @@
   },
   "detect": {
     "damage_min_pct": 4,
+    "damage_merge_window_ms": 250,
     "low_health_pct": 35,
     "recover_pct": 60,
     "dead_hold_s": 0.8,
@@ -42,7 +43,9 @@
     "mute_on_focus_loss": false,
     "game_window_title": "HELLDIVERS",
     "max_session_seconds": 0,
-    "master_multiplier": 1
+    "master_multiplier": 1,
+    "channel_a_multiplier": 1,
+    "channel_b_multiplier": 1
   },
   "rules": {
     "damage": {

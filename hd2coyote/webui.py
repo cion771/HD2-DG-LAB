@@ -346,6 +346,47 @@ class WebApp:
     def _on_event(self, event: Any) -> None:
         self._note(_fmt_event(event))
 
+    def _startup_checklist(self) -> dict[str, Any]:
+        """生成只读启动检查清单；向导绝不替用户武装输出。"""
+        engine = self.engine
+        st = engine.status
+        safety = self.cfg.safety
+        safety_ok = (
+            0.0 <= float(safety.master_multiplier) <= 2.0
+            and 0.0 <= float(safety.channel_a_multiplier) <= 2.0
+            and 0.0 <= float(safety.channel_b_multiplier) <= 2.0
+            and 0.0 <= float(safety.max_pct) <= 100.0
+            and 0 <= int(safety.max_absolute) <= 200
+        )
+        enabled = set(self.cfg.sources.enabled)
+        if "game_bridge" in enabled:
+            source_ok = bool(engine.hook and engine.hook.alive)
+            source_detail = (engine.hook.describe() if engine.hook else
+                             "游戏桥尚未启动；先开始检测，再确认游戏内状态上线")
+        else:
+            source_ok = any(bool(item.get("alive")) for item in st.sources)
+            source_detail = "至少一个已启用事件源在线" if source_ok else "尚未收到可用事件源状态"
+        steps = [
+            {"id": "safety", "label": "安全边界", "ok": safety_ok,
+             "detail": ("总倍率、A/B 倍率和强度上限均在允许范围内" if safety_ok
+                        else "请先修正倍率或强度上限")},
+            {"id": "device", "label": "设备服务", "ok": bool(engine.device.connected),
+             "detail": ("设备服务已连接" if engine.device.connected else
+                        "设备尚未连接；可先启动设备并完成扫码")},
+            {"id": "detecting", "label": "检测服务",
+             "ok": bool(st.running and st.detecting),
+             "detail": ("检测线程正在运行" if st.running and st.detecting else
+                        "尚未开始检测")},
+            {"id": "source", "label": "事件数据", "ok": source_ok,
+             "detail": source_detail},
+        ]
+        return {
+            "ready_to_arm": all(bool(step["ok"]) for step in steps),
+            "armed": engine.safety.armed,
+            "steps": steps,
+            "note": "检查向导不会自动武装输出；确认无误后仍需由你手动重新武装。",
+        }
+
     # ------------------------------------------------------------ API
     def status(self) -> dict[str, Any]:
         engine = self.engine
@@ -401,6 +442,7 @@ class WebApp:
             },
             "events": events,
             "bridge": bridge_diagnostics(self.bridge_cfg_dir),
+            "startup": self._startup_checklist(),
             "update": self.update_info(),
         }
 
@@ -409,7 +451,7 @@ class WebApp:
 
     @mutating
     def update_config(self, patch: dict[str, Any]) -> dict[str, Any]:
-        """局部合并控制器配置：rules / safety / device / hook / source。"""
+        """局部合并控制器配置：rules / safety / detect / device / hook / source。"""
         applied: list[str] = []
         if "source" in patch:
             source = str(patch["source"])
@@ -432,13 +474,38 @@ class WebApp:
         safety = patch.get("safety") or {}
         if isinstance(safety, dict):
             for key, value in safety.items():
-                if hasattr(self.cfg.safety, key):
-                    if key == "max_absolute":
-                        value = int(value)
-                    elif key in ("max_pct", "master_multiplier", "release_ms", "attack_ms"):
-                        value = float(value)
-                    setattr(self.cfg.safety, key, value)
-                    applied.append(f"safety.{key}={value}")
+                if not hasattr(self.cfg.safety, key):
+                    continue
+                if key == "max_absolute":
+                    value = int(value)
+                    if not 0 <= value <= 200:
+                        raise ValueError("safety.max_absolute 必须在 0..200")
+                elif key in ("max_pct", "master_multiplier", "channel_a_multiplier",
+                             "channel_b_multiplier", "release_ms", "attack_ms"):
+                    value = float(value)
+                    if key == "max_pct" and not 0.0 <= value <= 100.0:
+                        raise ValueError("safety.max_pct 必须在 0..100")
+                    if key in ("master_multiplier", "channel_a_multiplier",
+                               "channel_b_multiplier") and not 0.0 <= value <= 2.0:
+                        raise ValueError(f"safety.{key} 必须在 0..2")
+                setattr(self.cfg.safety, key, value)
+                applied.append(f"safety.{key}={value}")
+
+        detect = patch.get("detect") or {}
+        if isinstance(detect, dict):
+            for key, value in detect.items():
+                if not hasattr(self.cfg.detect, key):
+                    continue
+                if key == "damage_merge_window_ms":
+                    value = float(value)
+                    if not 0.0 <= value <= 5000.0:
+                        raise ValueError("detect.damage_merge_window_ms 必须在 0..5000")
+                elif key == "damage_min_pct":
+                    value = float(value)
+                    if not 0.0 <= value <= 100.0:
+                        raise ValueError("detect.damage_min_pct 必须在 0..100")
+                setattr(self.cfg.detect, key, value)
+                applied.append(f"detect.{key}={value}")
 
         device = patch.get("device") or {}
         if isinstance(device, dict):

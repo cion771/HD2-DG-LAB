@@ -18,6 +18,9 @@ class TestConfig(unittest.TestCase):
             cfg = AppConfig()
             cfg.hud.injury_slot_names = ["left", "body", "right"]
             cfg.rules["damage"].base_pct = 21.5
+            cfg.detect.damage_merge_window_ms = 375.0
+            cfg.safety.channel_a_multiplier = 0.75
+            cfg.safety.channel_b_multiplier = 1.25
             cfg.device.port = 10086
             cfg.save(path)
 
@@ -30,6 +33,9 @@ class TestConfig(unittest.TestCase):
             self.assertEqual(loaded.device.port, 10086)
             self.assertEqual(loaded.hud.injury_slot_names, ["left", "body", "right"])
             self.assertAlmostEqual(loaded.rules["damage"].base_pct, 21.5)
+            self.assertAlmostEqual(loaded.detect.damage_merge_window_ms, 375.0)
+            self.assertAlmostEqual(loaded.safety.channel_a_multiplier, 0.75)
+            self.assertAlmostEqual(loaded.safety.channel_b_multiplier, 1.25)
             self.assertEqual(loaded.rules["death"].wave, "death")
 
     def test_load_creates_file_when_missing(self) -> None:

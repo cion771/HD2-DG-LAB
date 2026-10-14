@@ -291,6 +291,7 @@ class TestLuaToPythonWire(unittest.TestCase):
         cfg = AppConfig()
         cfg.hook.port = self.port
         cfg.hook.timeout_s = 3.0
+        cfg.detect.damage_merge_window_ms = 0.0  # 本类验证 Lua→UDP→Python 接线
         self.src = HookSource(cfg)
         self.src.start()
 

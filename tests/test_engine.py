@@ -31,6 +31,14 @@ class TestSafety(unittest.TestCase):
         guard = SafetyGuard(cfg.safety)
         self.assertEqual(guard.strength_for(40.0, 200), 40)  # 40*0.5=20% -> 40
 
+    def test_channel_multiplier_is_applied_before_caps(self) -> None:
+        cfg = AppConfig()
+        cfg.safety.max_pct = 100.0
+        cfg.safety.max_absolute = 200
+        guard = SafetyGuard(cfg.safety)
+        self.assertEqual(guard.strength_for(40.0, 200, 0.5), 40)
+        self.assertEqual(guard.strength_for(40.0, 200, 1.5), 120)
+
     def test_disarm_zeroes_output(self) -> None:
         cfg = AppConfig()
         guard = SafetyGuard(cfg.safety)
@@ -86,6 +94,16 @@ class TestEngineWithMockDevice(unittest.TestCase):
         self.engine.tick(self.t0 + 0.2)
         self.assertGreater(self.engine.status.output_a, 0)
         self.assertGreater(self.engine.status.output_b, 0)
+
+    def test_independent_channel_multipliers(self) -> None:
+        self.cfg.safety.max_pct = 100.0
+        self.cfg.safety.max_absolute = 200
+        self.cfg.safety.channel_a_multiplier = 0.5
+        self.cfg.safety.channel_b_multiplier = 1.0
+        self.engine.inject(Death(), self.t0)
+        self.engine.tick(self.t0 + 0.2)
+        self.assertGreater(self.engine.status.output_a, 0)
+        self.assertEqual(self.engine.status.output_b, self.engine.status.output_a * 2)
 
     def test_trip_silences_everything(self) -> None:
         self.engine.inject(Death(), self.t0)

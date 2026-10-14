@@ -47,6 +47,7 @@ class TestNoVision(unittest.TestCase):
     def test_state_demo_does_not_load_image_packages(self):
         cfg = AppConfig()
         cfg.device.kind = "mock"
+        cfg.detect.damage_merge_window_ms = 0.0  # 此测试只验证无图像依赖
         engine = Engine(cfg)
         script = [DemoStep(0.0, 1.0, label="full"), DemoStep(0.1, 0.8, label="damage")]
         clock = SimpleNamespace(monotonic=mock.Mock(side_effect=[0.0, 0.0, 0.0, 0.1, 0.1, 0.3]), sleep=mock.Mock())

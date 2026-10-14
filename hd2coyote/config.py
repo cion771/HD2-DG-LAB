@@ -61,7 +61,8 @@ class HudConfig:
 class DetectConfig:
     """检测阈值。"""
 
-    damage_min_pct: float = 4.0  # 单次掉血超过最大血量的百分之几才算一次伤害
+    damage_min_pct: float = 4.0  # 窗口内累计掉血超过最大血量的百分之几才算一次伤害
+    damage_merge_window_ms: float = 250.0  # 固定（不滑动）伤害合并窗口；0 表示立即结算
     low_health_pct: float = 35.0  # 低于该血量进入低血量状态
     recover_pct: float = 60.0  # 回升到该血量解除低血量状态
     dead_hold_s: float = 0.8  # 血量为零持续多久判定为阵亡
@@ -160,6 +161,8 @@ class SafetyConfig:
     game_window_title: str = "HELLDIVERS"  # 焦点检测用
     max_session_seconds: float = 0.0  # >0 时累计输出超过该秒数自动静音
     master_multiplier: float = 1.0  # 总强度倍率（0~2）
+    channel_a_multiplier: float = 1.0  # A 通道独立倍率（0~2）
+    channel_b_multiplier: float = 1.0  # B 通道独立倍率（0~2）
 
 
 @dataclass

@@ -85,6 +85,7 @@ class TestBridgeDeadman(unittest.TestCase):
         cfg.hook.port = free_udp_port()
         cfg.hook.timeout_s = 0.5
         cfg.rules["damage"].base_pct = 20.0
+        cfg.detect.damage_merge_window_ms = 0.0  # 此处只测断流/恢复
         self.cfg = cfg
         self.port = cfg.hook.port
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

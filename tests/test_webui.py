@@ -128,6 +128,11 @@ class TestWebServer(unittest.TestCase):
         self.assertNotIn("/*__STYLE__*/", html)
         self.assertNotIn("/*__SCRIPT__*/", html)
         self.assertIn("/api/status", html)
+        self.assertIn('id="startupWizard"', html)
+        self.assertIn('id="channelA"', html)
+        self.assertIn('id="channelB"', html)
+        self.assertIn('id="damageWindow"', html)
+        self.assertIn("更新与回滚", html)
         self.assertNotIn("http://cdn", html)
         self.assertNotIn("https://", html)          # 不引任何外部资源
 
@@ -141,6 +146,10 @@ class TestWebServer(unittest.TestCase):
         self.assertIn("events", data)
         self.assertIn("bridge", data)
         self.assertIn("config_path", data["bridge"])
+        self.assertIn("startup", data)
+        self.assertIn("ready_to_arm", data["startup"])
+        self.assertEqual(len(data["startup"]["steps"]), 4)
+        self.assertIn("不会自动武装", data["startup"]["note"])
 
     def test_status_converts_internal_hp_ratio_to_percentage(self) -> None:
         self.app.engine.status.hp = 1.0
@@ -157,16 +166,24 @@ class TestWebServer(unittest.TestCase):
     def test_post_config_applies_and_persists(self) -> None:
         status, data = http("POST", self.base + "/api/config", {
             "rules": {"death": {"base_pct": 55, "enabled": False}},
-            "safety": {"max_absolute": 25, "master_multiplier": 0.5},
+            "safety": {"max_absolute": 25, "master_multiplier": 0.5,
+                       "channel_a_multiplier": 0.75, "channel_b_multiplier": 1.25},
+            "detect": {"damage_merge_window_ms": 400},
         })
         self.assertEqual(status, 200, data)
         self.assertTrue(data["ok"])
         self.assertAlmostEqual(data["config"]["rules"]["death"]["base_pct"], 55)
         self.assertFalse(data["config"]["rules"]["death"]["enabled"])
         self.assertEqual(data["config"]["safety"]["max_absolute"], 25)
+        self.assertEqual(data["config"]["safety"]["channel_a_multiplier"], 0.75)
+        self.assertEqual(data["config"]["safety"]["channel_b_multiplier"], 1.25)
+        self.assertEqual(data["config"]["detect"]["damage_merge_window_ms"], 400.0)
         # 已落盘
         saved = json.loads(self.config_path.read_text(encoding="utf-8"))
         self.assertEqual(saved["safety"]["max_absolute"], 25)
+        self.assertEqual(saved["safety"]["channel_a_multiplier"], 0.75)
+        self.assertEqual(saved["safety"]["channel_b_multiplier"], 1.25)
+        self.assertEqual(saved["detect"]["damage_merge_window_ms"], 400.0)
         # 引擎侧立即生效（安全上限是同一份对象）
         self.assertEqual(self.app.engine.safety.cfg.max_absolute, 25)
         self.assertEqual(self.app.engine.safety.strength_for(100.0, 200), 0)
@@ -177,6 +194,14 @@ class TestWebServer(unittest.TestCase):
         status, data = http("POST", self.base + "/api/config", {"device": {"port": 80}})
         self.assertEqual(status, 400)
         self.assertIn("port", data["error"])
+        status, data = http("POST", self.base + "/api/config",
+                            {"safety": {"channel_a_multiplier": 2.1}})
+        self.assertEqual(status, 400)
+        self.assertIn("channel_a_multiplier", data["error"])
+        status, data = http("POST", self.base + "/api/config",
+                            {"detect": {"damage_merge_window_ms": 5001}})
+        self.assertEqual(status, 400)
+        self.assertIn("damage_merge_window_ms", data["error"])
 
     def test_post_config_bad_source(self) -> None:
         status, data = http("POST", self.base + "/api/config", {"source": "telepathy"})
@@ -212,6 +237,18 @@ class TestWebServer(unittest.TestCase):
         self.assertEqual(data["bridge"]["parsed"]["mode"], "menu")
 
     # ------------------------------------------------------------ 动作
+    def test_start_and_wizard_never_auto_arm(self) -> None:
+        self.assertFalse(self.app.engine.safety.armed)
+        status, data = http("POST", self.base + "/api/actions", {"action": "start"})
+        self.assertEqual(status, 200, data)
+        self.assertTrue(self.app.engine.status.running)
+        self.assertFalse(self.app.engine.safety.armed)
+        _, snapshot = http("GET", self.base + "/api/status")
+        self.assertFalse(snapshot["startup"]["armed"])
+        self.assertFalse(snapshot["startup"]["ready_to_arm"])
+        self.assertEqual({row["id"] for row in snapshot["startup"]["steps"]},
+                         {"safety", "device", "detecting", "source"})
+
     def test_actions_trip_and_arm(self) -> None:
         status, data = http("POST", self.base + "/api/actions", {"action": "trip"})
         self.assertEqual(status, 200, data)
