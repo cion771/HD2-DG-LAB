@@ -5,7 +5,7 @@
 面向 Windows 的控制器，使用可双击运行的 **Fluent 桌面 EXE** 查看游戏状态、调整规则与强度、管理波形，并通过 DG-LAB 手机 App 连接郊狼 Coyote 3.0。纯 Web 运行模式已移除。
 仓库名为 **hd2-DG-LAB**，Python 模块与游戏内桥仍使用 `hd2coyote` / `HD2-Coyote-Bridge`，命令中无需改名。
 
-[桌面版使用与打包](docs/DESKTOP.md) · [更新与回滚](docs/UPGRADE.md) · [快速开始](#快速开始) · [连接游戏与设备](#连接游戏与设备) · [常见问题](#常见问题) · [隐私与发布检查](#隐私与发布检查) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/cion771/hd2-DG-LAB/issues)
+[桌面版使用与打包](docs/DESKTOP.md) · [更新与回滚](docs/UPGRADE.md) · [发布验收矩阵](docs/RELEASE_ACCEPTANCE.md) · [快速开始](#快速开始) · [连接游戏与设备](#连接游戏与设备) · [常见问题](#常见问题) · [隐私与发布检查](#隐私与发布检查) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/cion771/hd2-DG-LAB/issues)
 
 > [!WARNING]
 > 本项目控制人体接触式电刺激设备。使用前请完整阅读 [安全须知](SAFETY.md) 和设备说明书，**先用 mock 自测，再考虑连接真机**。
@@ -26,6 +26,7 @@
 | 惩罚累积 | 按事件与缺失血量增加反馈，支持封顶和回落；默认关闭 |
 | 输出保护 | 百分比/绝对强度双重上限、急停、关键状态源断流静音；会话预算需自行开启 |
 | 检查更新 | 查询 GitHub Releases，只提示版本和链接，不自动下载安装 |
+| 发布验收 | 自动验证版本、测试、隐私、产物与哈希；Windows/游戏/真机项目保留人工证据，不伪造实测结论 |
 
 ### 工作原理
 
@@ -249,10 +250,11 @@ Hook 无游戏联调：在一个终端运行 `run --mock`，另一个终端运�
 | [事件源](docs/SOURCES.md) | HTTP 协议、状态包与自定义源 |
 | [核心代码](hd2coyote/) | 检测、规则、波形、安全层与设备协议 |
 | [Lua 桥](lua/hd2_coyote_bridge.lua) / [工具](tools/) | 游戏内 addon、打包与模拟工具 |
-| [测试](tests/) / [更新记录](CHANGELOG.md) | 回归测试与版本变更 |
+| [测试](tests/) / [发布验收矩阵](docs/RELEASE_ACCEPTANCE.md) / [更新记录](CHANGELOG.md) | 回归测试、自动/人工验收边界与版本变更 |
 
 ```powershell
 ./.venv/Scripts/python.exe -m unittest discover -t . -s tests -v
+./.venv/Scripts/python.exe tools/release_acceptance.py
 ```
 
 测试涵盖规则、安全限幅、事件源、波形、Web API、UDP 链路与打包；部分 Lua 桥测试需要 LuaJIT 环境。离线测试不替代真实游戏版本适配与设备安全验证。

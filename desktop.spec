@@ -7,7 +7,8 @@ root = Path(SPECPATH)
 datas = [(str(root / "hd2coyote" / "frontend"), "hd2coyote/frontend")]
 for name in ("LICENSE", "THIRD_PARTY.md", "SAFETY.md", "VERSION"):
     datas.append((str(root / name), "."))
-datas.append((str(root / "docs" / "DESKTOP.md"), "docs"))
+for name in ("DESKTOP.md", "UPGRADE.md", "RELEASE_ACCEPTANCE.md"):
+    datas.append((str(root / "docs" / name), "docs"))
 # Wheel metadata includes license texts (including bundled native libraries).
 for package in ("pywebview", "websockets", "qrcode", "pyinstaller"):
     datas.extend(copy_metadata(package, recursive=True))

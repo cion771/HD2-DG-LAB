@@ -69,14 +69,14 @@ python -m venv .venv
 ```powershell
 python -m venv build/desktop-venv
 ./build/desktop-venv/Scripts/python.exe -m pip install -r requirements-desktop.txt
-./build/desktop-venv/Scripts/python.exe -m unittest discover -t . -s tests
+./build/desktop-venv/Scripts/python.exe tools/release_acceptance.py
 ./build/desktop-venv/Scripts/python.exe -m PyInstaller --noconfirm --clean desktop.spec
 Get-FileHash ./dist/HD2-DG-LAB.exe -Algorithm SHA256
 ```
 
 产物只有一个 EXE（首次启动会在系统临时目录解包，可能稍慢）。不自动发布 GitHub，不要求管理员权限。
 回归覆盖启动解除武装、重配置不恢复输出、同源请求检查、关闭幂等与服务器端口释放、原生窗口关闭/启动失败清理。
-这些是 Mock 软件测试，不代替真实硬件安全验证或当前游戏版本适配。
+正式发布还必须按 [发布验收矩阵](RELEASE_ACCEPTANCE.md) 验证 EXE、桥 ZIP、文档和哈希，并保留人工项的真实状态。这些是 Mock 软件测试，不代替 Windows 实机、真实硬件安全验证或当前游戏版本适配。
 
 ## 常见问题
 
