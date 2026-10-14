@@ -56,14 +56,16 @@ class HotkeyWatcher(threading.Thread):
 
     def __init__(self, bindings: dict[str, Callable[[], None]], poll_s: float = 0.05) -> None:
         super().__init__(name="hotkey-watcher", daemon=True)
-        self.bindings = bindings
+        # 统一键名，避免调用方传入小写后 vks 使用大写、回调查找却失败。
+        self.bindings = {str(name).upper(): callback for name, callback in bindings.items()}
         self.poll_s = poll_s
         self.log = logging.getLogger("hd2coyote.hotkeys")
-        self._stop = threading.Event()
+        # threading.Thread 内部已有 _stop()；不能用同名 Event 覆盖，否则 join() 会报错。
+        self._stop_event = threading.Event()
         self._down: dict[int, bool] = {}
 
     def stop(self) -> None:
-        self._stop.set()
+        self._stop_event.set()
 
     def run(self) -> None:
         if not IS_WINDOWS:
@@ -76,7 +78,7 @@ class HotkeyWatcher(threading.Thread):
         for name in self.bindings:
             if name.upper() not in VK_CODES:
                 self.log.warning("不认识的急停键名：%s", name)
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             for name, vk in vks.items():
                 pressed = bool(user32.GetAsyncKeyState(vk) & 0x8000)
                 if pressed and not self._down.get(vk):

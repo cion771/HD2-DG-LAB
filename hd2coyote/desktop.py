@@ -11,6 +11,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from .config import AppConfig
+from .safety import HotkeyWatcher
 from .webui import build_server
 
 LOGGER = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ class DesktopSession:
     """Own exactly one server/engine; do not attach to someone else's service."""
     def __init__(self, cfg: AppConfig, config_path: Path,
                  bridge_cfg_dir: str | Path | None = None) -> None:
+        self.cfg = cfg
         self.server, self.app = build_server(cfg, config_path, "127.0.0.1", 0, bridge_cfg_dir)
         self.url = f"http://127.0.0.1:{self.server.server_port}/"
         self.thread = threading.Thread(target=self.server.serve_forever,
@@ -33,11 +35,33 @@ class DesktopSession:
         self.thread.start()
         self._closed = False
         self._close_lock = threading.Lock()
+        self._hotkeys: HotkeyWatcher | None = None
+
+    def start_hotkeys(self) -> None:
+        """为 Fluent 桌面宿主启用全局热键；Web 模式不会隐式注册。"""
+        with self._close_lock:
+            if self._closed:
+                raise RuntimeError("桌面会话已经关闭")
+            if self._hotkeys is not None:
+                return
+            emergency = self.cfg.safety.emergency_key.upper()
+            pause = self.cfg.safety.pause_key.upper()
+            bindings = {pause: lambda: self.app.hotkey_toggle_detection(pause)}
+            # 若配置误把两个动作设为同一按键，安全优先：该键只能执行急停。
+            bindings[emergency] = lambda: self.app.hotkey_trip(emergency)
+            watcher = HotkeyWatcher(bindings)
+            watcher.start()
+            self._hotkeys = watcher
+            LOGGER.info("Fluent 桌面全局热键已启用：%s 暂停/恢复，%s 急停", pause, emergency)
 
     def close(self) -> None:
         with self._close_lock:
             if self._closed:
                 return
+            if self._hotkeys is not None:
+                self._hotkeys.stop()
+                self._hotkeys.join(timeout=1)
+                self._hotkeys = None
             try:
                 self.app.close("桌面窗口关闭")
             finally:
@@ -65,6 +89,7 @@ def run_desktop(config_path: str | Path | None = None,
                                        background_color="#f5f6f8", text_select=True)
         if window is None:
             raise RuntimeError("无法创建桌面窗口")
+        session.start_hotkeys()
 
         def on_closing() -> None:
             # Do not delay urgent stop behind a confirmation dialog.

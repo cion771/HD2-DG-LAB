@@ -14,6 +14,7 @@ from unittest.mock import Mock, patch
 
 from hd2coyote.config import AppConfig
 from hd2coyote.desktop import DesktopSession, SingleInstance, run_desktop
+from hd2coyote.safety import HotkeyWatcher
 
 
 class TestDesktopSession(unittest.TestCase):
@@ -90,6 +91,34 @@ class TestDesktopSession(unittest.TestCase):
         self.assertFalse(self.app.engine.status.running)
         self.assertFalse(self.app.engine.safety.armed)
 
+    def test_fluent_hotkeys_register_callbacks_and_cleanup(self):
+        watcher = Mock()
+        with patch("hd2coyote.desktop.HotkeyWatcher", return_value=watcher) as factory:
+            self.session.start_hotkeys()
+            self.session.start_hotkeys()  # 幂等，不能重复注册全局热键
+            factory.assert_called_once()
+            watcher.start.assert_called_once()
+            bindings = factory.call_args.args[0]
+            self.assertEqual(set(bindings), {"F11", "F12"})
+
+            self.app.engine.arm()
+            bindings["F12"]()
+            self.assertFalse(self.app.engine.safety.armed)
+            self.assertEqual(self.app.engine.safety.mute_reason, "F12 全局急停")
+
+            with patch.object(self.app.engine, "start") as start, \
+                    patch.object(self.app.engine, "stop") as stop:
+                self.app.engine.status.running = False
+                bindings["F11"]()
+                start.assert_called_once()
+                self.app.engine.status.running = True
+                bindings["F11"]()
+                stop.assert_called_once()
+
+            self.session.close()
+            watcher.stop.assert_called_once()
+            watcher.join.assert_called_once_with(timeout=1)
+
     def test_browser_cross_origin_and_rebinding_are_rejected(self):
         port = self.session.server.server_port
         for headers in ({"Origin": "https://evil.invalid"},
@@ -137,6 +166,40 @@ class ClosingEvent:
             handler()
 
 
+class TestHotkeyWatcher(unittest.TestCase):
+    def test_non_windows_thread_can_stop_and_join_cleanly(self):
+        callback = Mock()
+        with patch("hd2coyote.safety.IS_WINDOWS", False):
+            watcher = HotkeyWatcher({"f12": callback}, poll_s=0.001)
+            watcher.start()
+            watcher.stop()
+            watcher.join(timeout=1)
+        self.assertFalse(watcher.is_alive())
+        self.assertTrue(watcher._stop_event.is_set())
+        self.assertEqual(set(watcher.bindings), {"F12"})
+        callback.assert_not_called()
+
+    def test_windows_polling_debounces_and_dispatches_global_key(self):
+        calls = []
+        watcher = None
+
+        def callback():
+            calls.append("F11")
+            if len(calls) == 2:
+                watcher.stop()
+
+        watcher = HotkeyWatcher({"f11": callback}, poll_s=0)
+        user32 = SimpleNamespace(GetAsyncKeyState=Mock(
+            side_effect=[0x8000, 0x8000, 0, 0x8000]))
+        fake_ctypes = SimpleNamespace(windll=SimpleNamespace(user32=user32))
+        with patch("hd2coyote.safety.IS_WINDOWS", True), \
+                patch.dict(sys.modules, {"ctypes": fake_ctypes}), \
+                patch("hd2coyote.safety.time.sleep"):
+            watcher.run()
+        self.assertEqual(calls, ["F11", "F11"])
+        self.assertEqual(user32.GetAsyncKeyState.call_count, 4)
+
+
 class TestNativeHost(unittest.TestCase):
     def test_window_close_and_gui_failure_both_cleanup(self):
         for failure in (False, True):
@@ -163,6 +226,7 @@ class TestNativeHost(unittest.TestCase):
                             run_desktop(data_dir=root)
                     else:
                         run_desktop(data_dir=root)
+                session.start_hotkeys.assert_called_once()
                 self.assertTrue(session.close.called)
                 self.assertEqual(factory.call_args.args[1], root / "config.json")
                 self.assertEqual(view.start.call_args.kwargs["gui"], "edgechromium")

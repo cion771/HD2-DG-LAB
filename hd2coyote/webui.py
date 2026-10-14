@@ -582,6 +582,26 @@ class WebApp:
             return self.close(str(payload.get("reason", "Web 控制台")), delay=0.6)
         raise ValueError(f"未知动作：{name}")
 
+    @mutating
+    def hotkey_trip(self, key: str = "F12") -> dict[str, Any]:
+        """桌面宿主的全局急停入口；不经过浏览器或 HTTP。"""
+        label = str(key or "F12").upper()
+        self.engine.trip(f"{label} 全局急停")
+        self._note(f"桌面热键：{label} 急停（需重新武装才恢复输出）")
+        return {"ok": True, "detail": f"{label} 已急停"}
+
+    @mutating
+    def hotkey_toggle_detection(self, key: str = "F11") -> dict[str, Any]:
+        """暂停/恢复检测，不改变武装状态；保持旧版 Tk 热键语义。"""
+        label = str(key or "F11").upper()
+        if self.engine.status.running:
+            self.engine.stop()
+            self._note(f"桌面热键：{label} 暂停检测")
+            return {"ok": True, "detail": f"{label} 已暂停检测", "running": False}
+        self.engine.start()
+        self._note(f"桌面热键：{label} 恢复检测")
+        return {"ok": True, "detail": f"{label} 已恢复检测", "running": True}
+
     def close(self, reason: str = "桌面窗口", delay: float = 0.0) -> dict[str, Any]:
         """幂等关闭。先禁止后续写入、急停与停止，再通知服务器退出。
 
