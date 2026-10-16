@@ -1,0 +1,28 @@
+[package]
+name = "hd2-app"
+version = "0.6.2"
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+
+[dependencies]
+axum = "0.8"
+clap = { version = "4", features = ["derive"] }
+hd2-core = { path = "../hd2-core" }
+hd2-dglab = { path = "../hd2-dglab" }
+http = "1"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time", "fs"] }
+tower = { version = "0.5", features = ["util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+webbrowser = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+

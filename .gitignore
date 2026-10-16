@@ -24,3 +24,7 @@ venv/
 # 打包产物
 build/
 dist/
+
+# Rust
+/target/
+**/*.rs.bk

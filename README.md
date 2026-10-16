@@ -5,7 +5,7 @@
 面向 Windows 的控制器，使用可双击运行的 **Fluent 桌面 EXE** 查看游戏状态、调整规则与强度、管理波形，并通过 DG-LAB 手机 App 连接郊狼 Coyote 3.0。纯 Web 运行模式已移除。
 仓库名为 **hd2-DG-LAB**，Python 模块与游戏内桥仍使用 `hd2coyote` / `HD2-Coyote-Bridge`，命令中无需改名。
 
-[桌面版使用与打包](docs/DESKTOP.md) · [更新与回滚](docs/UPGRADE.md) · [发布验收矩阵](docs/RELEASE_ACCEPTANCE.md) · [快速开始](#快速开始) · [连接游戏与设备](#连接游戏与设备) · [常见问题](#常见问题) · [隐私与发布检查](#隐私与发布检查) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/cion771/hd2-DG-LAB/issues)
+[Rust 客户端](docs/RUST.md) · [桌面版使用与打包](docs/DESKTOP.md) · [更新与回滚](docs/UPGRADE.md) · [发布验收矩阵](docs/RELEASE_ACCEPTANCE.md) · [快速开始](#快速开始) · [连接游戏与设备](#连接游戏与设备) · [常见问题](#常见问题) · [隐私与发布检查](#隐私与发布检查) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/cion771/hd2-DG-LAB/issues)
 
 > [!WARNING]
 > 本项目控制人体接触式电刺激设备。使用前请完整阅读 [安全须知](SAFETY.md) 和设备说明书，**先用 mock 自测，再考虑连接真机**。
@@ -34,7 +34,7 @@
 《绝地潜兵 2》+ 社区加载器 + Lua 桥
                   │ 本机 UDP 状态流（127.0.0.1:47777）
                   ▼
-          Python 控制器 ← HTTP 事件源（可选）
+           Rust 控制器 ← HTTP 事件源（可选）
                   │ 事件判定 → 规则/波形 → 安全限幅
                   ▼
           WebSocket 服务（端口 9999）
@@ -61,7 +61,7 @@ Fluent 桌面版负责操作控制器；其内嵌本地界面**不是**手机扫
 
 从 [Releases](https://github.com/cion771/hd2-DG-LAB/releases) 下载 EXE 后可直接双击运行，先在「设备连接」选择 Mock。桌面版默认使用独立配置、保持解除武装，不会自动开始检测。详见 [桌面文档](docs/DESKTOP.md)。
 
-以下是从源码运行桌面版的路线，命令在 **PowerShell** 中运行。已有源码可从第 2 步开始。
+以下是从源码运行桌面版的路线，命令在 **PowerShell** 中运行。Rust 新客户端的构建方式见 [Rust 客户端文档](docs/RUST.md)；下方 Python 命令在迁移期保留作兼容参考与差分测试基线。已有源码可从第 2 步开始。
 
 ### 1. 获取源码
 
@@ -248,7 +248,8 @@ Hook 无游戏联调：在一个终端运行 `run --mock`，另一个终端运�
 | [Fluent 桌面](docs/DESKTOP.md) | EXE、源码启动、独立数据目录与打包 |
 | [Fluent 界面与内嵌 API](docs/WEBUI.md) | 面板、桌面内部 API、配置与关闭行为 |
 | [事件源](docs/SOURCES.md) | HTTP 协议、状态包与自定义源 |
-| [核心代码](hd2coyote/) | 检测、规则、波形、安全层与设备协议 |
+| [Rust 客户端](docs/RUST.md) / [Rust crates](crates/) | 新控制器实现、构建、测试与安全边界 |
+| [Python 参考实现](hd2coyote/) | 迁移期兼容基线与差分测试参考 |
 | [Lua 桥](lua/hd2_coyote_bridge.lua) / [工具](tools/) | 游戏内 addon、打包与模拟工具 |
 | [测试](tests/) / [发布验收矩阵](docs/RELEASE_ACCEPTANCE.md) / [更新记录](CHANGELOG.md) | 回归测试、自动/人工验收边界与版本变更 |
 
