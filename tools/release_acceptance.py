@@ -88,9 +88,12 @@ def check_tests(python: str = sys.executable) -> Result:
     except OSError as exc:
         return _result("AUT-02", "完整 unittest 回归测试", False, f"无法执行测试：{exc}")
     count = re.search(r"Ran\s+(\d+)\s+tests?", completed.stdout)
-    ok = completed.returncode == 0 and bool(re.search(r"(?m)^OK\s*$", completed.stdout))
-    evidence = f"Ran {count.group(1)} tests; OK" if ok and count else (
-        completed.stdout.strip().splitlines()[-1] if completed.stdout.strip() else "无输出")
+    summary = re.search(r"(?m)^OK(?: \(skipped=(\d+)\))?[ \t]*$", completed.stdout)
+    ok = completed.returncode == 0 and bool(summary)
+    evidence = (f"Ran {count.group(1)} tests; OK"
+                + (f" (skipped={summary.group(1)})" if summary and summary.group(1) else "")
+                if ok and count else
+                completed.stdout.strip().splitlines()[-1] if completed.stdout.strip() else "无输出")
     return _result("AUT-02", "完整 unittest 回归测试", ok, evidence)
 
 

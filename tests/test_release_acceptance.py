@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -18,6 +19,16 @@ class TestReleaseAcceptance(unittest.TestCase):
     def test_repository_versions_pass(self) -> None:
         result = acceptance.check_versions(ROOT)
         self.assertEqual(result.status, "PASS", result.evidence)
+
+    def test_unittest_skips_still_pass_release_gate(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="Ran 327 tests in 40.1s\n\nOK (skipped=55)\n")
+        with mock.patch.object(acceptance.subprocess, "run", return_value=completed):
+            result = acceptance.check_tests("python")
+        self.assertEqual(result.status, "PASS", result.evidence)
+        self.assertIn("skipped=55", result.evidence)
+        completed.returncode = 1
+        with mock.patch.object(acceptance.subprocess, "run", return_value=completed):
+            self.assertEqual(acceptance.check_tests("python").status, "FAIL")
 
     def test_report_keeps_manual_checks_pending(self) -> None:
         report = acceptance.render_report(
