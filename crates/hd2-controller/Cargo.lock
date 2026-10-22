@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "hd2-controller"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "hd2-core",
  "thiserror",
@@ -12,7 +12,7 @@ dependencies = [
 
 [[package]]
 name = "hd2-core"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "serde",
  "serde_json",

@@ -90,8 +90,11 @@ function render(s) {
   text('pollState','刚刚同步'); setBadge('sessionBadge',c.running ? '检测运行中' : '控制器待机',c.running ? 'good' : 'quiet');
   const receiving = c.running && (c.sources || []).some(source => source.alive);
   const bridgeData = c.running && h.alive;
-  text('bridgeStatus',!h.listening ? '未监听游戏桥' : bridgeData ? '游戏状态在线' : h.connected ? '桥在线 · 数据未就绪' : '等待桥心跳');
-  text('bridgeDetail',h.detail || '请启用游戏桥事件源并开始检测；无需武装输出。'); $('bridgeDot').className = 'status-dot' + (bridgeData ? '' : ' neutral');
+  const vision = (c.sources || []).find(source => source.name === 'vision');
+  const visionData = c.running && !!vision?.alive;
+  const validState = bridgeData || visionData;
+  text('bridgeStatus',vision ? (visionData ? 'HUD 状态在线' : '等待任务 HUD') : !h.listening ? '未监听游戏桥' : bridgeData ? '游戏状态在线' : h.connected ? '桥在线 · 数据未就绪' : '等待桥心跳');
+  text('bridgeDetail',vision ? vision.detail : h.detail || '请启用游戏桥事件源并开始检测；无需武装输出。'); $('bridgeDot').className = 'status-dot' + (validState ? '' : ' neutral');
   const mock = /mock/i.test(d.kind); text('deviceStatus',mock ? 'Mock 模拟' : d.connected ? '已连接' : '未连接');
   text('deviceDetail',mock ? '不连接真实硬件' : d.connected ? 'DG-LAB App 在线' : '在设备页连接手机');
   $('deviceDot').className = 'status-dot' + (d.connected ? '' : ' neutral'); setBadge('dev',mock ? 'Mock 模拟设备' : d.connected ? '已连接' : '未连接',d.connected ? 'good' : 'quiet');
@@ -99,10 +102,10 @@ function render(s) {
   width('meterA',c.output.a,d.limit_a); width('meterB',c.output.b,d.limit_b); text('outPct',c.output.pct + '%'); text('sess',c.session_seconds + ' s');
   setBadge('armedBadge',c.armed ? '已武装' : '已静音',c.armed ? 'warning' : 'quiet');
   text('state',c.last_error || c.mute_reason || (c.running ? '检测运行中，输出受安全上限约束。' : '尚未开始检测；请先确认设备与安全边界。'));
-  const hpPct = c.hp_pct, hasData = bridgeData && typeof hpPct === 'number' && Number.isFinite(hpPct);
+  const hpPct = c.hp_pct, hasData = validState && typeof hpPct === 'number' && Number.isFinite(hpPct);
   text('hp',hasData ? Math.round(hpPct) + '%' : '—'); width('hpbar',hasData ? hpPct : 0);
   const limbNames = ['头部','胸部','左臂','右臂','左腿','右腿'];
-  text('limbs',hasData ? (c.limbs.map((x,i) => x ? limbNames[i] || '部位' + (i + 1) : '').filter(Boolean).join('、') || '未检测到损伤') : '等待有效数据');
+  text('limbs',vision ? '视觉源仅测血量' : hasData ? (c.limbs.map((x,i) => x ? limbNames[i] || '部位' + (i + 1) : '').filter(Boolean).join('、') || '未检测到损伤') : '等待有效数据');
   text('rampValue',c.ramp.enabled ? c.ramp.pct + '% / ' + c.ramp.ceiling_pct + '%' : '未启用');
   text('src',(c.sources || []).map(x => x.label + ' · ' + (x.alive ? '在线' : '等待')).join('；') || '尚未启动');
   text('sourceBadge','事件源');
@@ -134,6 +137,7 @@ async function loadBridge() {
 }
 async function loadSources() {
   const s = sourceData = await api('/api/sources'); $('srcList').replaceChildren();
+  $('visionCalibration').hidden = !s.catalog.some(item => item.name === 'vision');
   s.catalog.forEach(item => { const row = node('div','source-row'), label = node('label'), input = node('input'); input.type = 'checkbox'; input.id = 'src_' + item.name; input.checked = s.enabled.includes(item.name); label.append(input,node('b','',item.label),node('span','muted',item.name)); row.append(label,node('small','',item.hint)); $('srcList').append(row); });
   text('srcInfo','HTTP 上报：' + s.http.url + (s.http.token_required ? '（需要令牌）' : '（无令牌）') + ' · 限速 ' + s.http.max_per_s + '/s。更换事件源会停止检测，需手动重启。');
   text('srcUsage',Object.entries(s.http.examples).map(([k,v]) => k + '  ' + JSON.stringify(v)).join('\n'));
@@ -170,6 +174,18 @@ async function shutdownApp() {
 const actions = {
   theme:() => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'), shutdown:shutdownApp,
   loadBridge,loadSources,loadWaves,
+  calibrateVision:async () => {
+    if (!await confirmAction('校准游戏 HUD 血条？','控制器会停止检测并保持静音。点击确定后有 5 秒切换到任务画面，保持血条可见。')) return;
+    text('visionCalibInfo','5 秒后截取游戏窗口，请切回游戏并保持 HUD 可见…');
+    const result = await api('/api/vision/calibrate',{delay_s:5});
+    const b = result.box, hp = result.hp_pct;
+    $('visionPreview').src = result.preview; $('visionPreview').hidden = false;
+    text('visionCalibInfo','候选区域：' + [b.x,b.y,b.w,b.h].join(',') + ' · HP≈' + hp + '%；请核对下方预览。');
+    if (!await confirmAction('确认这是你的血条？','候选位置 '+[b.x,b.y,b.w,b.h].join(',')+'，当前读数约 '+hp+'%。请先查看预览图。若不符，取消并使用手动校准。')) return;
+    await saveConfig({vision:{hp_bar:b,auto_locate:false}});
+    toast('血条区域已保存；视觉源仍需手动开始检测并核对实时读数。');
+    await loadSources();
+  },
   testPulse:() => pulse(), testWave:() => { if (!value('wName').trim()) throw Error('请先选择已保存的波形'); return pulse(value('wName').trim()); },
   saveSources:async () => { if (!sourceData) throw Error('请先读取事件源'); const enabled = sourceData.catalog.filter(x => $('src_' + x.name).checked).map(x => x.name); if (!enabled.length) throw Error('至少启用一个事件源'); if (!await confirmAction('切换事件源？','这将停止检测并重建设备连接。保存后需手动重新武装和开始检测。')) return; await saveConfig({sources:{enabled}}); await loadSources(); },
   injectEvent:async () => { const kind = value('evKind'), n = number('evVal'); if (!await confirmAction('注入调试事件？','此操作会进入规则层，已武装时可能产生真实输出。')) return; const body = kind === 'state' ? {ev:kind,hp:n,hp_max:100,limbs:[0,0,0]} : kind === 'damage' ? {ev:kind,severity:n} : kind === 'low_health' ? {ev:kind,ratio:n/100} : kind === 'limb_injury' ? {ev:kind,slot:1,name:'左肢'} : {ev:kind}; toast((await api('/api/event',body)).detail); },

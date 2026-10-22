@@ -218,9 +218,7 @@ class Engine:
             return
 
         if self.cfg.source == "hook" and self.hook is None:
-            self.log.warning("配置里 source=hook，但事件源里没有 game_bridge —— "
-                             "改走 HTTP 事件源，请确认外部程序会往 %s:%d 上报",
-                             self.cfg.sources.http_host, self.cfg.sources.http_port)
+            self.log.info("未启用游戏桥，当前结构化状态源：%s", self._source_hint())
         self.log.info("事件源就绪：%s", self._source_hint())
         self.status.detecting = True
         self._last_tick = time.monotonic()
@@ -228,21 +226,28 @@ class Engine:
         while not self._stop.is_set():
             now = time.monotonic()
             try:
+                pending: list[Event] = []
                 for src in self.sources:
-                    for event in src.poll(now):
-                        self._handle_event(event, now)
+                    pending.extend(src.poll(now))
                 critical = [s for s in self.sources if s.critical_now()]
                 gone = [s for s in critical if not s.alive]
-                if gone and not lost:
+                if gone:
+                    if not lost:
+                        self.log.warning("关键状态流中断（%s），立即清队列与归零",
+                                         "、".join(s.label for s in gone))
+                        self.device.mute()
+                        self.status.output_a = self.status.output_b = 0
                     lost = True
-                    self.log.warning("关键状态流中断（%s），已静音等它回来",
-                                     "、".join(s.label for s in gone))
-                elif not gone and lost:
-                    lost = False
-                    self.log.info("关键状态流已恢复：%s", self._source_hint())
-                if lost and self._effects:
                     self._effects.clear()
-                self._advance_effects(now)
+                    self._cur_a = self._cur_b = 0.0
+                    self._push_output(now, force_zero=True)
+                else:
+                    if lost:
+                        lost = False
+                        self.log.info("关键状态流已恢复：%s", self._source_hint())
+                    for event in pending:
+                        self._handle_event(event, now)
+                    self._advance_effects(now)
                 self._update_status(now)
             except Exception as exc:  # 任何异常都不允许留下输出
                 self.log.exception("引擎异常：%s", exc)
@@ -391,9 +396,16 @@ class Engine:
         self.status.sources = [src.status().as_dict() for src in self.sources]
         bridge = self._source_map.get("game_bridge")
         state = getattr(bridge, "state", None)
-        if state is not None:
+        if state is not None and bridge.alive:
             self.status.hp = state.hp
             self.status.injury = [float(v) for v in state.limbs]
+        elif "vision" in self._source_map:
+            vision = self._source_map["vision"]
+            self.status.hp = vision.hp
+            self.status.injury = []
+        else:
+            self.status.hp = None
+            self.status.injury = []
         self.status.hook_alive = bool(getattr(bridge, "alive", False))
         self.status.hook_detail = bridge.describe() if bridge is not None else "未启用游戏桥"
         self.ramp.note_hp(self.status.hp)

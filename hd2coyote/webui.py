@@ -20,6 +20,7 @@
     POST /api/event        手动注入一个事件/状态（调试用；照样过规则与安全上限）
     POST /api/waves        波形库增删改 / 导入导出 / 试打
     POST /api/update       真的去查一次 GitHub Releases（只提示，不自动安装）
+    POST /api/vision/calibrate  等待切回游戏、只读窗口 HUD、返回候选血条预览
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ import logging
 import re
 import threading
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from functools import wraps
 from urllib.parse import urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -37,7 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__, update_check, wave_lib, waves
-from .config import AppConfig
+from .config import AppConfig, Box
 from .engine import Engine, _fmt_event
 from .events import truthy
 from .sources import source_catalog
@@ -291,6 +292,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.waves_api(body))
             elif route == "/api/update":
                 self._json(self.app.update_api(body))
+            elif route == "/api/vision/calibrate":
+                self._json(self.app.calibrate_vision(body))
             else:
                 self._json({"error": "not found"}, 404)
         except ValueError as exc:
@@ -450,6 +453,42 @@ class WebApp:
         return self.cfg.to_dict()
 
     @mutating
+    def calibrate_vision(self, body: dict[str, Any]) -> dict[str, Any]:
+        """给 GUI 留切回游戏的时间；仅返回候选，不自动保存、不发送输出。"""
+        delay = float(body.get("delay_s", 5.0))
+        if not 0.0 <= delay <= 10.0:
+            raise ValueError("delay_s 必须在 0..10")
+        self.engine.trip("HUD 校准中")
+        self.engine.stop()
+        if delay:
+            time.sleep(delay)
+        from .sources.vision import capture_game_client
+        from .vision import auto_locate_hp_bar, bar_fill_ratio, crop
+        try:
+            frame, _geometry = capture_game_client(self.cfg.safety.game_window_title,
+                                                   self.cfg.vision.backend)
+        except RuntimeError as exc:
+            raise ValueError(str(exc)) from exc
+        box = auto_locate_hp_bar(frame, brightness=float(self.cfg.vision.brightness))
+        if box is None:
+            raise ValueError("没有找到血条：请进入任务、显示 HUD，或使用手动校准工具")
+        ratio = bar_fill_ratio(frame, box)
+        if ratio is None:
+            raise ValueError("候选血条读数无效")
+        import base64
+        import io
+        from PIL import Image
+        region = crop(frame, box)
+        if region is None:
+            raise ValueError("候选区域为空")
+        preview = Image.fromarray(region.copy()).resize((480, max(24, min(120, box.h * 4))))
+        stream = io.BytesIO()
+        preview.save(stream, format="PNG")
+        return {"ok": True, "box": asdict(box), "hp_pct": round(ratio * 100.0, 1),
+                "preview": "data:image/png;base64," + base64.b64encode(stream.getvalue()).decode("ascii"),
+                "detail": "检测已停止且未武装。请核对预览是否为血条，再确认保存。"}
+
+    @mutating
     def update_config(self, patch: dict[str, Any]) -> dict[str, Any]:
         """局部合并控制器配置：rules / safety / detect / device / hook / source。"""
         applied: list[str] = []
@@ -553,6 +592,47 @@ class WebApp:
                     setattr(self.cfg.sources, key, value)
                 applied.append(f"sources.{key}={value}")
 
+        vision = patch.get("vision")
+        if isinstance(vision, dict) and vision:
+            candidate = replace(self.cfg.vision)
+            allowed = {"hp_bar", "fps", "backend", "auto_locate", "brightness",
+                       "stale_timeout_s", "error_limit"}
+            for key, raw in vision.items():
+                if key not in allowed:
+                    raise ValueError(f"未知视觉配置字段：{key}")
+                if key == "hp_bar":
+                    if raw is None:
+                        value = None
+                    elif isinstance(raw, dict):
+                        try:
+                            value = Box(**{k: int(raw[k]) for k in ("x", "y", "w", "h")})
+                        except (KeyError, ValueError, TypeError) as exc:
+                            raise ValueError("vision.hp_bar 需要 x/y/w/h 整数") from exc
+                        if value.x < 0 or value.y < 0 or not 40 <= value.w <= 1400 \
+                                or not 3 <= value.h <= 40:
+                            raise ValueError("vision.hp_bar 区域尺寸或坐标无效")
+                    else:
+                        raise ValueError("vision.hp_bar 需要矩形对象")
+                elif key == "backend":
+                    value = str(raw)
+                    if value not in ("mss", "pil"):
+                        raise ValueError("vision.backend 只能是 mss 或 pil")
+                elif key == "auto_locate":
+                    value = truthy(raw)
+                elif key == "error_limit":
+                    value = int(raw)
+                    if not 1 <= value <= 100:
+                        raise ValueError("vision.error_limit 必须在 1..100")
+                else:
+                    value = float(raw)
+                    lower, upper = {"fps": (1, 30), "brightness": (80, 250),
+                                    "stale_timeout_s": (0.5, 10)}[key]
+                    if not lower <= value <= upper:
+                        raise ValueError(f"vision.{key} 必须在 {lower}..{upper}")
+                setattr(candidate, key, value)
+                applied.append(f"vision.{key}")
+            self.cfg.vision = candidate
+
         # ---- 0.5.0：惩罚累积
         ramp = patch.get("ramp") or {}
         if isinstance(ramp, dict):
@@ -587,7 +667,7 @@ class WebApp:
         self.cfg.save(self.config_path)
         self._manual_source = None    # 配置变了，手动注入的解析实例重建
         # 立即生效（规则/安全是引用，设备与数据源要重建）
-        if "device" in patch or "source" in patch or "sources" in patch:
+        if "device" in patch or "source" in patch or "sources" in patch or "vision" in patch:
             self.engine.trip("配置变更：停止检测并重新连接")
             self.engine.stop()
             self.engine = Engine(self.cfg)

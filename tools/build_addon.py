@@ -156,7 +156,8 @@ def build(args: argparse.Namespace) -> Path:
         "Name": display,
         "Description": "Reads your Helldiver's health / limb damage / death in-game (read-only) "
                        "and forwards it to hd2-coyote over UDP. Requires Bingus Shared Loader "
-                       "v15+ (API 1). Only this one mod is needed.",
+                       "v18+ (API 1); current game builds also require HD2Runtime 0.31+. "
+                       "Legacy profile fallback remains available for the old pinned build.",
         # ★ 关键：Arsenal/HD2MM 靠 Options[].Include 决定"这个 mod 要部署哪些目录"。
         #   没有 Options 时，Arsenal 日志会写 "Deployed ... successfully - 0 files copied"，
         #   游戏里一个文件都不会出现（实测踩过：mod 列表里有、data 里没有）。

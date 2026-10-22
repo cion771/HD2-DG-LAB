@@ -10,11 +10,13 @@ import logging
 import socket
 import time
 import unittest
+from unittest import mock
 
 from hd2coyote import wave_lib, waves
 from hd2coyote.config import AppConfig
 from hd2coyote.engine import Engine
 from hd2coyote.events import Damage, Death, LimbInjury
+from hd2coyote.sources.base import Source
 
 LOG = logging.getLogger("hd2coyote.tests.engine_sources")
 
@@ -127,6 +129,59 @@ class TestBridgeDeadman(unittest.TestCase):
         self.assertTrue(wait_for(lambda: self.engine.device.peak_strength > 0),
                         "状态流恢复后没有继续输出")
         self.assertTrue(self.engine.status.hook_alive)
+
+
+class TestCriticalSourceImmediateMute(unittest.TestCase):
+    def test_stream_loss_clears_queued_wave_and_strength(self) -> None:
+        class FakeSource(Source):
+            name = "fixture"
+            label = "Fixture"
+            critical = True
+            def __init__(self, cfg):
+                super().__init__(cfg)
+                self.present = True
+                self.pending = []
+            @property
+            def alive(self):
+                return self.present
+            def poll(self, now):
+                pending, self.pending = self.pending, []
+                return pending
+
+        cfg = AppConfig()
+        cfg.device.kind = "mock"
+        cfg.detect.damage_merge_window_ms = 0.0
+        engine = Engine(cfg, LOG)
+        source = FakeSource(cfg)
+        with mock.patch("hd2coyote.engine.build_sources", return_value=[source]):
+            engine.start()
+            try:
+                self.assertTrue(wait_for(lambda: engine.status.detecting))
+                engine.arm()
+                source.pending.append(Damage(severity=20, hp_before=1.0, hp_after=0.8))
+                self.assertTrue(wait_for(lambda: engine.status.output_a > 0))
+                source.present = False
+                self.assertTrue(wait_for(lambda: engine.status.output_a == 0, timeout=1.0))
+                self.assertFalse(engine._effects)
+                self.assertEqual(engine.device.strength["A"], 0)
+                self.assertTrue(any(record.op == "clear" for record in engine.device.history))
+            finally:
+                engine.stop()
+
+
+class TestVisionStatus(unittest.TestCase):
+    def test_status_uses_fresh_vision_when_bridge_is_stale(self) -> None:
+        cfg = AppConfig()
+        cfg.device.kind = "mock"
+        engine = Engine(cfg, LOG)
+        bridge = type("Bridge", (), {"state": type("State", (), {"hp": 0.1, "limbs": [1]})(),
+                                     "alive": False, "describe": lambda self: "旧桥已断流"})()
+        vision = type("Vision", (), {"hp": 0.7, "alive": True,
+                                     "describe": lambda self: "HP=70%"})()
+        engine._source_map = {"game_bridge": bridge, "vision": vision}
+        engine._update_status(time.monotonic())
+        self.assertEqual(engine.status.hp, 0.7)
+        self.assertEqual(engine.status.injury, [])
 
 
 class TestWaveLibraryPriority(unittest.TestCase):

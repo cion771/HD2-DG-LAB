@@ -446,7 +446,7 @@ dependencies = [
 
 [[package]]
 name = "hd2-app"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "axum",
  "clap",
@@ -468,7 +468,7 @@ dependencies = [
 
 [[package]]
 name = "hd2-core"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -477,7 +477,7 @@ dependencies = [
 
 [[package]]
 name = "hd2-dglab"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "futures-util",
  "hd2-core",

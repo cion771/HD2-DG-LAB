@@ -24,7 +24,7 @@
 -- 构建不匹配就拒绝读取，不接受用户手填偏移，也不扫描整个地址空间。
 
 local ADDON = 'mods/hd2coyote/hd2_coyote_bridge'
-local VERSION = '0.6.2'   -- 必须与仓库根的 VERSION 文件一致（打包时会校验）
+local VERSION = '0.6.4'   -- 必须与仓库根的 VERSION 文件一致（打包时会校验）
 local PROTOCOL = 1
 
 --------------------------------------------------------------------- 配置
@@ -544,6 +544,159 @@ local function json(pairs_list)
         parts[#parts + 1] = '"' .. k .. '":' .. enc
     end
     return '{' .. table.concat(parts, ',') .. '}'
+end
+
+--------------------------------------------------------------------- HD2Runtime 兼容层
+-- 新版游戏优先走 HD2Runtime 的稳定只读 API；这样由 Runtime 负责适配游戏构建，
+-- 本桥不再为每次游戏更新维护 game.dll 偏移。旧 profile 仅在 Runtime 未安装时降级使用。
+local runtime_live = {
+    active = false, ready = false, dead = false, hp_max = 100,
+    last = nil, last_heartbeat = nil, handles = {}, hd2 = nil,
+}
+
+local function runtime_load()
+    if runtime_live.hd2 then return runtime_live.hd2 end
+    local ok, hd2 = pcall(require, 'mods/skyeshade/hd2runtime')
+    if not ok or type(hd2) ~= 'table' then
+        return nil, 'HD2Runtime 未安装或尚未加载：' .. tostring(hd2)
+    end
+    if type(hd2.local_player) ~= 'function' or type(hd2.on_frame) ~= 'function'
+        or type(hd2.build) ~= 'function' then
+        return nil, 'HD2Runtime API 不完整（需要 0.31+）'
+    end
+    runtime_live.hd2 = hd2
+    return hd2
+end
+
+local function runtime_snapshot()
+    local hd2 = runtime_live.hd2
+    if not hd2 then return nil, 'HD2Runtime 未初始化' end
+    local ok, state, why = pcall(function()
+        local player = hd2.local_player()
+        if not player then return nil, '本地玩家尚未生成' end
+        local hp = player:health()
+        local hp_max = player:max_health()
+        if type(hp) ~= 'number' or type(hp_max) ~= 'number' or hp_max <= 0 then
+            return nil, '本地玩家生命状态尚不可读'
+        end
+        local alive = player:is_alive()
+        return {
+            hp = math.max(0, hp), hp_max = hp_max,
+            limbs = { 0, 0, 0, 0, 0, 0 }, bleeding = 0,
+            dead = alive == false and 1 or 0,
+        }
+    end)
+    if not ok then return nil, 'HD2Runtime 读取异常：' .. tostring(state) end
+    return state, why
+end
+
+local function runtime_emit_state(force)
+    if not runtime_live.active or not net.ready then return false end
+    local now = now_ms()
+    if not force and runtime_live.last and now - runtime_live.last < CONFIG.interval * 1000 then
+        return false
+    end
+    runtime_live.last = now
+    local st, why = runtime_snapshot()
+    if not st then
+        if not runtime_live.dead then
+            runtime_live.ready = false
+            runtime_live.wait_reason = why
+            return false
+        end
+        st = { hp = 0, hp_max = runtime_live.hp_max or 100,
+               limbs = { 0, 0, 0, 0, 0, 0 }, bleeding = 0, dead = 1 }
+    else
+        runtime_live.hp_max = st.hp_max
+        runtime_live.dead = st.dead == 1
+    end
+    local sent = send(json({
+        { 'v', PROTOCOL }, { 'ev', 'state' }, { 't', now / 1000 },
+        { 'hp', st.hp }, { 'hp_max', st.hp_max }, { 'limbs', st.limbs },
+        { 'bleeding', st.bleeding }, { 'dead', st.dead },
+    }))
+    if sent and not runtime_live.ready then
+        runtime_live.ready, runtime_live.wait_reason = true, nil
+        status(true, string.format('HD2Runtime live 已就绪（runtime=%s source=public_api）',
+                                  tostring(runtime_live.hd2.version or '?')))
+    end
+    return sent
+end
+
+local function runtime_tick()
+    if not runtime_live.active then return end
+    local now = now_ms()
+    if not runtime_live.last_heartbeat or now - runtime_live.last_heartbeat >= 1000 then
+        runtime_live.last_heartbeat = now
+        send(json({ { 'v', PROTOCOL }, { 'ev', 'heartbeat' }, { 'ver', VERSION },
+                    { 'build', 'HD2Runtime-' .. tostring(runtime_live.hd2.version or '?') },
+                    { 'profile', 'hd2runtime' }, { 'mode', CONFIG.mode },
+                    { 'detail', bridge_detail:sub(1, 300) } }))
+    end
+    runtime_emit_state(false)
+end
+
+local function start_runtime_mode(mode)
+    local hd2, why = runtime_load()
+    if not hd2 then return false, why end
+    local build_status, build_info = hd2.build()
+    if build_status == 'mismatched' then
+        status(false, 'HD2Runtime 也不支持当前游戏构建：' .. tostring(build_info and build_info.reason or 'mismatched'))
+        return true
+    end
+    if not init_ffi() or not init_net() then
+        status(false, 'HD2Runtime 可用，但 UDP 初始化失败：' .. tostring(ffi_reason))
+        return true
+    end
+    send(json({ { 'v', PROTOCOL }, { 'ev', 'hello' }, { 'ver', VERSION },
+                { 'build', 'HD2Runtime-' .. tostring(hd2.version or '?') },
+                { 'profile', 'hd2runtime' }, { 'mode', mode } }))
+    if mode == 'recon' then
+        local st, state_why = runtime_snapshot()
+        status(st ~= nil, st and string.format('recon 完成：HD2Runtime public API，HP=%s/%s',
+                                               tostring(st.hp), tostring(st.hp_max))
+                          or 'recon 未就绪：' .. tostring(state_why))
+        return true
+    end
+    runtime_live.active = true
+    local function died()
+        runtime_live.dead, runtime_live.ready = true, true
+        runtime_emit_state(true)
+    end
+    local function spawned()
+        runtime_live.dead, runtime_live.ready, runtime_live.last = false, false, nil
+        runtime_emit_state(true)
+    end
+    local function damaged() runtime_emit_state(true) end
+    local ok, err = pcall(function()
+        local owner = type(hd2.mod) == 'function' and hd2.mod(ADDON) or nil
+        local function register()
+            runtime_live.handles.frame = hd2.on_frame(runtime_tick, { id = 'hd2coyote.runtime.frame' })
+            if owner and type(owner.on) == 'function' then
+                runtime_live.handles.damage = owner:on('player_damaged', damaged, { id = 'hd2coyote.damage' })
+                runtime_live.handles.death = owner:on('player_died', died, { id = 'hd2coyote.death' })
+                runtime_live.handles.spawn = owner:on('player_spawned', spawned, { id = 'hd2coyote.spawn' })
+            elseif hd2.events and type(hd2.events.on) == 'function' then
+                runtime_live.handles.damage = hd2.events.on('player_damaged', damaged,
+                                                            { id = 'hd2coyote.damage' })
+                runtime_live.handles.death = hd2.events.on('player_died', died,
+                                                           { id = 'hd2coyote.death' })
+                runtime_live.handles.spawn = hd2.events.on('player_spawned', spawned,
+                                                            { id = 'hd2coyote.spawn' })
+            end
+        end
+        if owner and type(owner.run) == 'function' then owner:run(register) else register() end
+    end)
+    if not ok then
+        runtime_live.active = false
+        status(false, 'HD2Runtime 事件注册失败：' .. tostring(err))
+        return true
+    end
+    runtime_emit_state(true)
+    if not runtime_live.ready then
+        status(true, 'HD2Runtime live 已启动，等待本地玩家状态')
+    end
+    return true
 end
 
 --------------------------------------------------------------------- 构建验证与本地玩家定位
@@ -1071,6 +1224,13 @@ local function main()
         return
     end
 
+    -- 新版 live/recon 优先使用 HD2Runtime 的稳定 API。Runtime 未安装时才回退旧 profile。
+    if CONFIG.mode == 'live' or CONFIG.mode == 'recon' then
+        local handled, runtime_why = start_runtime_mode(CONFIG.mode)
+        if handled then return end
+        log(tostring(runtime_why) .. '；降级尝试旧版内存 profile')
+    end
+
     -- === net 及以上：FFI + UDP 上报（还不挂钩子、不读游戏内存） ===
     if not init_ffi() then
         status(false, 'FFI 不可用：' .. tostring(ffi_reason))
@@ -1185,5 +1345,9 @@ return {
     frame_tick = frame_tick,
     install_frame_hook = install_frame_hook,
     start_live = start_live,
+    runtime_live = runtime_live,
+    runtime_snapshot = runtime_snapshot,
+    runtime_emit_state = runtime_emit_state,
+    start_runtime_mode = start_runtime_mode,
     main = main,
 }

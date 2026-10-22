@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from hd2coyote.config import (AppConfig, DetectConfig, DeviceConfig,
+from hd2coyote.config import (AppConfig, Box, DetectConfig, DeviceConfig,
                               HudConfig, RuleConfig, SafetyConfig, from_dict)
 
 
@@ -69,6 +69,8 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.sources.enabled, ["http"])
         self.assertEqual(cfg.detect.death_state_threshold, 0.9)
         self.assertNotIn("capture", cfg.to_dict())
+        self.assertEqual(cfg.vision.backend, "mss")
+        self.assertEqual(cfg.vision.hp_bar, Box(1, 2, 3, 4))
         self.assertNotIn("hp_bar", cfg.to_dict()["hud"])
         self.assertNotIn("death_template", cfg.to_dict()["hud"])
         self.assertNotIn("death_template_threshold", cfg.to_dict()["detect"])

@@ -45,6 +45,8 @@ class TestNoVision(unittest.TestCase):
                 app.close()
 
     def test_state_demo_does_not_load_image_packages(self):
+        # 全套测试可能先运行 vision 像素用例；这里只检查默认路径没有新增导入。
+        before = set(sys.modules)
         cfg = AppConfig()
         cfg.device.kind = "mock"
         cfg.detect.damage_merge_window_ms = 0.0  # 此测试只验证无图像依赖
@@ -55,7 +57,7 @@ class TestNoVision(unittest.TestCase):
             run_demo(cfg, engine, duration=0.2, script=script)
         self.assertTrue(any(type(ev).__name__ == "Damage" for ev in engine.events_log))
         for package in ("numpy", "PIL", "mss", "dxcam", "hd2coyote.capture", "hd2coyote.hud"):
-            self.assertNotIn(package, sys.modules)
+            self.assertNotIn(package, set(sys.modules) - before)
 
 
 if __name__ == "__main__":

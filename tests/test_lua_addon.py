@@ -197,6 +197,80 @@ class TestLuaAddon(unittest.TestCase):
         self.assertTrue(status.startswith("OK - "), status)
         self.assertIn("health_manager", status)
 
+    def test_live_prefers_hd2runtime_public_api(self) -> None:
+        rt = self._rt()
+        rt.execute(r'''FAKE_RUNTIME = { player = true, hp = 75, hp_max = 100, alive = true, callbacks = {} }
+package.preload['mods/skyeshade/hd2runtime'] = function()
+    local hd2 = { version = '0.40.0', events = {} }
+    local player = {}
+    function player:health() return FAKE_RUNTIME.hp end
+    function player:max_health() return FAKE_RUNTIME.hp_max end
+    function player:is_alive() return FAKE_RUNTIME.alive end
+    function hd2.local_player() if FAKE_RUNTIME.player then return player end return nil end
+    function hd2.build() return 'matched', { pinned = 'FAKEBUILD000' } end
+    function hd2.on_frame(callback, _)
+        FAKE_RUNTIME.frame = callback
+        return { cancel = function() FAKE_RUNTIME.frame = nil end }
+    end
+    function hd2.events.on(name, callback, _)
+        FAKE_RUNTIME.callbacks[name] = callback
+        return { cancel = function() FAKE_RUNTIME.callbacks[name] = nil end }
+    end
+    function hd2.mod(_)
+        local mod = {}
+        function mod:run(fn) return fn() end
+        function mod:on(name, callback, opts) return hd2.events.on(name, callback, opts) end
+        return mod
+    end
+    return hd2
+end
+''')
+        self._write_user_config("live", with_offsets=False)
+        self._load(rt)
+
+        sent = [json.loads(s) for s in lua_list(rt, "FAKE_SENT")]
+        hello = next(p for p in sent if p.get("ev") == "hello")
+        states = [p for p in sent if p.get("ev") == "state"]
+        self.assertEqual(hello["profile"], "hd2runtime")
+        self.assertEqual(hello["build"], "HD2Runtime-0.40.0")
+        self.assertTrue(states)
+        self.assertEqual(states[-1]["hp"], 75)
+        self.assertEqual(states[-1]["hp_max"], 100)
+        self.assertEqual(states[-1]["limbs"], [0, 0, 0, 0, 0, 0])
+        self.assertEqual(rt.eval("FAKE_VQ_CALLS"), 0)  # Runtime 路径不读旧 profile 地址
+        status = (self.dir / "hd2_coyote_status.txt").read_text(encoding="utf-8")
+        self.assertIn("HD2Runtime", status)
+
+        rt.execute("FAKE_RUNTIME.hp = 40; FAKE_RUNTIME.frame(0.016)")
+        states = [json.loads(s) for s in lua_list(rt, "FAKE_SENT") if '"ev":"state"' in s]
+        self.assertEqual(states[-1]["hp"], 40)
+
+        rt.execute("FAKE_RUNTIME.player = false; FAKE_RUNTIME.alive = false; "
+                   "FAKE_RUNTIME.callbacks.player_died({ local_player = true })")
+        states = [json.loads(s) for s in lua_list(rt, "FAKE_SENT") if '"ev":"state"' in s]
+        self.assertEqual(states[-1]["dead"], 1)
+        self.assertEqual(states[-1]["hp"], 0)
+
+    def test_runtime_build_mismatch_never_falls_back_to_old_profile(self) -> None:
+        rt = self._rt()
+        rt.execute(r'''package.preload['mods/skyeshade/hd2runtime'] = function()
+    return {
+        version = '0.40.0',
+        local_player = function() return nil end,
+        on_frame = function() error('must not register') end,
+        build = function() return 'mismatched', { reason = 'fake new build' } end,
+    }
+end
+''')
+        self._write_user_config("live", with_offsets=False)
+        self._load(rt)
+        status = (self.dir / "hd2_coyote_status.txt").read_text(encoding="utf-8")
+        self.assertTrue(status.startswith("FAILED - "), status)
+        self.assertIn("HD2Runtime", status)
+        self.assertIn("fake new build", status)
+        self.assertEqual(rt.eval("FAKE_VQ_CALLS"), 0)
+        self.assertFalse(any('"ev":"state"' in s for s in lua_list(rt, "FAKE_SENT")))
+
     # ------------------------------------------------------------ 3. live + 帧钩子
     def test_live_mode_hooks_frame_function(self) -> None:
         rt = self._rt()

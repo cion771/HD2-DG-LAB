@@ -21,6 +21,7 @@ from .base import (
 )
 from .game_bridge import GameBridgeSource
 from .http import HttpEventSource
+from .vision import VisionSource
 
 __all__ = [
     "REGISTRY",
@@ -33,4 +34,5 @@ __all__ = [
     "source_catalog",
     "GameBridgeSource",
     "HttpEventSource",
+    "VisionSource",
 ]

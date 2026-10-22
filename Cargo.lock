@@ -458,7 +458,7 @@ dependencies = [
 
 [[package]]
 name = "hd2-app"
-version = "0.6.2"
+version = "0.6.4"
 dependencies = [
  "axum",
  "clap",
@@ -480,7 +480,7 @@ dependencies = [
 
 [[package]]
 name = "hd2-controller"
-version = "0.6.2"
+version = "0.6.4"
 dependencies = [
  "hd2-core",
  "thiserror",
@@ -488,7 +488,7 @@ dependencies = [
 
 [[package]]
 name = "hd2-core"
-version = "0.6.2"
+version = "0.6.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -497,7 +497,7 @@ dependencies = [
 
 [[package]]
 name = "hd2-dglab"
-version = "0.6.2"
+version = "0.6.4"
 dependencies = [
  "futures-util",
  "hd2-core",
@@ -511,7 +511,7 @@ dependencies = [
 
 [[package]]
 name = "hd2-source-http"
-version = "0.6.2"
+version = "0.6.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -522,7 +522,7 @@ dependencies = [
 
 [[package]]
 name = "hd2-source-udp"
-version = "0.6.2"
+version = "0.6.4"
 dependencies = [
  "serde_json",
  "thiserror",

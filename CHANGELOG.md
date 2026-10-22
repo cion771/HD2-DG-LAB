@@ -5,6 +5,26 @@
 
 ---
 
+## 0.6.4
+
+- 新增可选 `vision` 事件源：在游戏进程之外截取**游戏窗口客户区**并读取 HUD 血条，
+  不注入、不读进程内存，因此在 EAC 环境下没有可检测的注入行为。
+- `vision` 与游戏桥共用 `EventTrackers` → 规则 → 安全限幅链路，并声明为 critical 源：
+  读数超时、游戏不在前台或黑帧时自动停止发布，由引擎静音。
+- 新增 Python 桌面“事件源”校准按钮：点击后 5 秒切回游戏、仅截游戏客户区、返回候选血条预览；人工确认后保存 `hp_bar`，仍保持未武装。另有 `tools/vision_calibrate.py` 源码辅助脚本。
+- 配置新增 `vision` 段并迁移旧 `capture` 与 `hud.hp_bar` 字段；默认仍只启用
+  `game_bridge`，不抓屏。
+- 新增 `docs/EAC.md` 说明：EAC 未拦截模组加载，缺桥是补丁部署晚于游戏启动；
+  不做驱动级反作弊绕过。
+
+## 0.6.3
+
+- 游戏桥的 live/recon 模式现在优先使用 HD2Runtime 公开只读 API，适配 Steam build 25988413 等由 Runtime 已支持的新构建，不再依赖本项目硬编码的 game.dll 偏移。
+- 通过 HD2Runtime 上报本地玩家生命、最大生命、伤害、阵亡与复活；公开 API 暂不提供只读肢体伤势，因此该路径安全上报六个未受伤槽位，不伪造断肢事件。
+- 未安装 HD2Runtime 时仍可降级到旧版 steam_25480438 profile；Runtime 已安装但报告构建不匹配时明确失败，不尝试过期地址。
+- 新增 LuaJIT 假 HD2Runtime 回归，覆盖优先选择、HP 更新、死亡状态和不读取旧 profile 地址。
+- 游戏更新会清掉手工部署的 patch；0.6.3 桥必须重新导入/Deploy。当前游戏环境要求 Bingus Shared Loader 与 HD2Runtime 均已安装。
+
 ## 0.6.2
 
 - Windows 发布版 EXE 改为 `HD2-DG-LAB-<VERSION>.exe`，文件名直接标明程序版本，便于并存、核对和回滚。

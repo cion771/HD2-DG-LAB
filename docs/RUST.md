@@ -27,6 +27,8 @@ cargo build --release -p hd2-app
 
 桌面入口只监听 `127.0.0.1` 的随机端口，并复用现有离线前端。默认保持未武装；启动检测、设备连接与重新武装是分离的显式操作。
 
+**当前 `vision` 外部 HUD 源仅接入 Python 桌面客户端，Rust crate 尚未绑定该适配器。** 如需完全不使用游戏内桥，按 [EAC 与视觉源说明](EAC.md) 使用 Python 桌面版及 `sources.enabled=["vision"]`。
+
 ## 兼容性重点
 
 - 配置读取保留旧字段迁移，输出使用 UTF-8 JSON。

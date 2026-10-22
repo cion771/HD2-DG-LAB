@@ -1,12 +1,12 @@
-# 桥连接排查（0.5.6）
+# 桥连接排查（0.6.3）
 
 ## 自动读取玩家数据
 
-安装 0.5.6 游戏桥，在桌面端「游戏内桥」选择 `live` 并保存，再由用户通过 mod 管理器导入、Deploy 并重启游戏。桌面端启用 `game_bridge`，点击「开始检测」。首次验证必须使用 Mock、保持未武装。
+安装 0.6.3 游戏桥，并确认 Bingus Shared Loader v18+ 与 HD2Runtime 0.31+ 已安装。在桌面端「游戏内桥」选择 `live` 并保存，再由 mod 管理器导入、Deploy 桥 ZIP 并重启游戏。桌面端启用 `game_bridge`，点击「开始检测」。首次验证必须使用 Mock、保持未武装。
 
-`live` 不需要填写内存偏移。它从 `game.dll` 自动解析：本地用户 → 本地玩家槽 → Avatar network id → 实体 → health manager，读取生命值、最大生命值、六个肢体的原生受伤状态和阵亡状态。玩家在切船或重生期间暂时不存在时，每 3 秒重试；有效数据按配置间隔上报。
+`live` 不需要填写内存偏移。它优先通过 HD2Runtime 公开 API 读取本地玩家生命、最大生命和存活状态，并订阅伤害、阵亡与复活。玩家在切船或重生期间暂时不存在时会等待恢复；有效数据按配置间隔上报。
 
-当前内置 profile 支持游戏构建 `1.8.46015.0`。每次读取前先验证 `game.dll` 的 PE 映像大小及七处关键指令指纹；更新后不匹配会拒绝读取，不会猜地址或扫描整个地址空间。旧配置中的 `profiles` / 手填偏移会被忽略。
+旧 `steam_25480438` profile 仅在 HD2Runtime 未安装时降级使用，且只支持旧构建 `1.8.46015.0`。HD2Runtime 已安装但报告构建不匹配时，桥会安全拒绝并要求更新 Runtime，不会猜地址或扫描地址空间。
 
 游戏桥到控制器是本机 UDP，不是需要粘贴的 Web 链接。手机 App 扫码连接是另一个独立通道。
 
@@ -26,9 +26,9 @@
 
 ## 仍然检测不到时
 
-1. 确认桌面诊断显示桥版本 `0.5.6` 且实际模式为 `live`，而不是仅配置文件写了 live。
+1. 确认桌面诊断显示桥版本 `0.6.3`、profile 为 `hd2runtime` 且实际模式为 `live`。若加载器日志没有 `mods/hd2coyote/hd2_coyote_bridge: loaded`，说明更新后桥未重新 Deploy。
 2. 确认游戏已经在导入/Deploy 后完整重启；仅回到标题或飞船不等于重载 addon。
-3. 查看 `%LOCALAPPDATA%\hd2coyote\hd2_coyote_status.txt`。若提示构建不匹配，说明游戏已更新，需要发布新的 profile；不要手填偏移。
+3. 查看 `%LOCALAPPDATA%\hd2coyote\hd2_coyote_status.txt`。若提示 HD2Runtime 构建不匹配，先更新 Runtime；若提示 Runtime 未安装，安装 Runtime 或仅在旧游戏构建使用降级 profile。
 4. 飞船切换、读取存档、重生时 Avatar 可短暂不存在；等待数秒。持续失败时运行一次 `recon`，只在本机查看报告。
 
 日志、配置、内存报告、扫码 URL/二维码都可能包含私人信息。仅本地查看，不上传 GitHub、Release 或公开截图。

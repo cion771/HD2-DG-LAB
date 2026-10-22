@@ -9,10 +9,10 @@ exe_name = f"HD2-DG-LAB-{version}"
 datas = [(str(root / "hd2coyote" / "frontend"), "hd2coyote/frontend")]
 for name in ("LICENSE", "THIRD_PARTY.md", "SAFETY.md", "VERSION"):
     datas.append((str(root / name), "."))
-for name in ("DESKTOP.md", "UPGRADE.md", "RELEASE_ACCEPTANCE.md"):
+for name in ("DESKTOP.md", "UPGRADE.md", "RELEASE_ACCEPTANCE.md", "EAC.md"):
     datas.append((str(root / "docs" / name), "docs"))
 # Wheel metadata includes license texts (including bundled native libraries).
-for package in ("pywebview", "websockets", "qrcode", "pyinstaller"):
+for package in ("pywebview", "websockets", "qrcode", "numpy", "pillow", "mss", "pyinstaller"):
     datas.extend(copy_metadata(package, recursive=True))
 python_license = Path(sys.base_prefix) / "LICENSE.txt"
 if not python_license.is_file():
@@ -22,9 +22,9 @@ datas.append((str(python_license), "licenses/python"))
 a = Analysis(
     [str(root / "desktop_entry.py")], pathex=[str(root)],
     binaries=[], datas=datas,
-    hiddenimports=["webview.platforms.edgechromium", "qrcode.image.svg"],
+    hiddenimports=["webview.platforms.edgechromium", "qrcode.image.svg", "numpy", "PIL.ImageGrab", "mss"],
     hookspath=[], hooksconfig={}, runtime_hooks=[],
-    excludes=["numpy", "mss", "PIL", "dxcam", "hd2coyote.capture", "hd2coyote.hud", "pytest", "tkinter", "hd2coyote.ui", "hd2coyote.__main__"],
+    excludes=["dxcam", "pytest", "tkinter", "hd2coyote.ui", "hd2coyote.__main__"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

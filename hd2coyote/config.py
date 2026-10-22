@@ -13,6 +13,19 @@ from typing import Any, Literal
 
 
 @dataclass
+class Box:
+    """屏幕矩形；视觉源使用相对游戏窗口客户区的像素坐标。"""
+
+    x: int = 0
+    y: int = 0
+    w: int = 0
+    h: int = 0
+
+    def is_valid(self) -> bool:
+        return self.w > 1 and self.h > 1
+
+
+@dataclass
 class DeviceConfig:
     """设备连接配置。"""
 
@@ -47,6 +60,20 @@ class SourcesConfig:
     http_token: str = ""  # 非空时要求 X-HD2Coyote-Token 头（或 ?token=）
     http_max_per_s: float = 20.0  # 限速：超过就丢弃并告警，避免外部脚本刷爆电极
     http_timeout_s: float = 3.0  # 收到过 state 后超过这么久没数据 = 断流（0 = 不判）
+
+
+@dataclass
+class VisionConfig:
+    """独立进程 HUD 视觉源；不注入、不读取游戏进程。"""
+
+    monitor: int = 1
+    fps: float = 10.0
+    backend: Literal["mss", "pil"] = "mss"
+    hp_bar: Box | None = None
+    auto_locate: bool = False  # 先用校准工具确认区域，避免菜单元素被误识别
+    brightness: float = 165.0
+    stale_timeout_s: float = 1.5
+    error_limit: int = 30
 
 
 @dataclass
@@ -174,6 +201,7 @@ class AppConfig:
     device: DeviceConfig = field(default_factory=DeviceConfig)
     hook: HookConfig = field(default_factory=HookConfig)
     sources: SourcesConfig = field(default_factory=SourcesConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
     hud: HudConfig = field(default_factory=HudConfig)
     detect: DetectConfig = field(default_factory=DetectConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
@@ -231,6 +259,7 @@ NESTED_TYPES: dict[str, type] = {
     "device": DeviceConfig,
     "hook": HookConfig,
     "sources": SourcesConfig,
+    "vision": VisionConfig,
     "hud": HudConfig,
     "detect": DetectConfig,
     "safety": SafetyConfig,
@@ -245,6 +274,26 @@ def from_dict(cls: type, data: dict[str, Any]) -> Any:
     """把 dict 还原为 dataclass（含嵌套 dataclass / rules / 波形库），忽略未知键。"""
     if data is None:
         return None
+    if cls is AppConfig:
+        data = dict(data)
+        if "vision" not in data:
+            old_capture = data.get("capture") if isinstance(data.get("capture"), dict) else {}
+            old_hud = data.get("hud") if isinstance(data.get("hud"), dict) else {}
+            migrated = {k: old_capture[k] for k in ("monitor", "fps", "backend") if k in old_capture}
+            if isinstance(old_hud.get("hp_bar"), dict):
+                migrated["hp_bar"] = old_hud["hp_bar"]
+            if migrated:
+                data["vision"] = migrated
+        if str(data.get("source", "")) == "vision" and "sources" not in data:
+            data["sources"] = {"enabled": ["vision"]}
+    if cls is Box:
+        return Box(**{k: int(v) for k, v in data.items() if k in {"x", "y", "w", "h"}})
+    if cls is VisionConfig:
+        known = {f.name for f in fields(VisionConfig)}
+        out = {k: v for k, v in data.items() if k in known}
+        if isinstance(out.get("hp_bar"), dict):
+            out["hp_bar"] = from_dict(Box, out["hp_bar"])
+        return VisionConfig(**out)
     if cls is RuleConfig:
         known = {f.name for f in fields(RuleConfig)}
         return RuleConfig(**{k: v for k, v in data.items() if k in known})

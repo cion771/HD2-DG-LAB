@@ -5,7 +5,7 @@
 面向 Windows 的控制器，使用可双击运行的 **Fluent 桌面 EXE** 查看游戏状态、调整规则与强度、管理波形，并通过 DG-LAB 手机 App 连接郊狼 Coyote 3.0。纯 Web 运行模式已移除。
 仓库名为 **hd2-DG-LAB**，Python 模块与游戏内桥仍使用 `hd2coyote` / `HD2-Coyote-Bridge`，命令中无需改名。
 
-[Rust 客户端](docs/RUST.md) · [桌面版使用与打包](docs/DESKTOP.md) · [更新与回滚](docs/UPGRADE.md) · [发布验收矩阵](docs/RELEASE_ACCEPTANCE.md) · [快速开始](#快速开始) · [连接游戏与设备](#连接游戏与设备) · [常见问题](#常见问题) · [隐私与发布检查](#隐私与发布检查) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/cion771/hd2-DG-LAB/issues)
+[EAC 与外部 HUD 视觉源](docs/EAC.md) · [Rust 客户端](docs/RUST.md) · [桌面版使用与打包](docs/DESKTOP.md) · [更新与回滚](docs/UPGRADE.md) · [发布验收矩阵](docs/RELEASE_ACCEPTANCE.md) · [快速开始](#快速开始) · [连接游戏与设备](#连接游戏与设备) · [常见问题](#常见问题) · [隐私与发布检查](#隐私与发布检查) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/cion771/hd2-DG-LAB/issues)
 
 > [!WARNING]
 > 本项目控制人体接触式电刺激设备。使用前请完整阅读 [安全须知](SAFETY.md) 和设备说明书，**先用 mock 自测，再考虑连接真机**。
@@ -20,8 +20,8 @@
 | Fluent 桌面 | 浅色与深色界面，启动检查向导、状态卡片、规则调节、测试脉冲、桥配置与诊断 |
 | 伤害合并 | 固定非滑动时间窗口合并连续掉血，减少同一连击被拆成多次反馈 |
 | 独立通道强度 | A/B 通道倍率独立调整，仍统一经过总倍率和安全上限 |
-| 结构化状态来源 | 游戏内 Lua 桥与可选 HTTP 事件源；不抓屏、不做 OCR 或像素识别 |
-| 可扩展事件源 | 游戏桥 UDP 与 HTTP 事件源可合流，统一经过规则与安全层 |
+| 状态来源 | 游戏内 Lua 桥、可选 HTTP 事件源；Python 桌面版另有按需加载的窗口 HUD 视觉源（默认关闭） |
+| 可扩展事件源 | Lua 桥 UDP、HTTP 和外部 HUD 视觉源统一经过规则与安全限幅 |
 | 波形库 | 内置预设、命名波形、桌面界面编辑，以及 `pulse_data` JSON 导入/导出 |
 | 惩罚累积 | 按事件与缺失血量增加反馈，支持封顶和回落；默认关闭 |
 | 输出保护 | 百分比/绝对强度双重上限、急停、关键状态源断流静音；会话预算需自行开启 |
@@ -34,7 +34,7 @@
 《绝地潜兵 2》+ 社区加载器 + Lua 桥
                   │ 本机 UDP 状态流（127.0.0.1:47777）
                   ▼
-           Rust 控制器 ← HTTP 事件源（可选）
+     Python/Rust 控制器 ← HTTP 事件源（可选）
                   │ 事件判定 → 规则/波形 → 安全限幅
                   ▼
           WebSocket 服务（端口 9999）
@@ -43,7 +43,7 @@
           DG-LAB App ── 蓝牙 ── 郊狼 Coyote 3.0
 ```
 
-已移除旧截图识别与标定管线；没有游戏时可用 Mock 和合成状态进行自测。
+Python 桌面版重新加入独立进程 HUD 视觉源，默认关闭；进入任务后须先校准血条，见 [EAC 与视觉源说明](docs/EAC.md)。当前 Rust 客户端尚未接入视觉适配器。没有游戏时可用 Mock 和合成状态自测。
 Fluent 桌面版负责操作控制器；其内嵌本地界面**不是**手机扫码连接的 WebSocket 服务。
 
 ## 使用前准备
@@ -52,10 +52,10 @@ Fluent 桌面版负责操作控制器；其内嵌本地界面**不是**手机扫
 - **从源码运行 Fluent 桌面版**：Windows + Python 3.10 或更高版本、Microsoft Edge WebView2 Runtime；安装 Python 时勾选加入 PATH。
 - 安装依赖时需要联网；使用 Git 克隆则还需要 Git，也可下载仓库 ZIP。
 - 真机反馈需要 **郊狼 Coyote 3.0、DG-LAB 手机 App**，以及手机与电脑互通的可信局域网。
-- Hook 路线需要《绝地潜兵 2》、[Bingus Shared Loader](https://github.com/CowboyBingus/Helldivers2ModLoader) 及兼容的 mod 管理器。
+- Hook 路线需要《绝地潜兵 2》、Bingus Shared Loader v18+、[HD2Runtime](https://github.com/SkyeShade/HD2Runtime) 0.31+ 及兼容的 mod 管理器；旧固定 profile 仅用于历史构建降级。
 - [Mod Options Menu](https://github.com/CowboyBingus/ModOptionsMenu) 是可选的游戏内连接信息与日志菜单，不是 Fluent 桌面版的前置依赖。
 
-> 没有游戏或设备也可以完成 mock 自测。0.5.6 内置游戏构建 `1.8.46015.0` 的自动读取 profile；**安装成功、离线测试通过仍不等于真实游戏读数已经在你的机器上核对。**
+> 没有游戏或设备也可以完成 mock 自测。0.6.3 起，新版游戏优先通过 HD2Runtime 的公开 API 读取玩家状态；旧 `1.8.46015.0` profile 仅作降级兼容。**安装成功、离线测试通过仍不等于真实游戏读数已经在你的机器上核对。**
 
 ## 快速开始
 
@@ -129,7 +129,7 @@ python -m venv .venv
 1. 打包产物为 `build/HD2-Coyote-Bridge-<VERSION>.zip`，版本号来自 [VERSION](VERSION)。将 ZIP 用 Arsenal / HD2 Mod Manager 导入、启用、Deploy，然后重启游戏。
 2. **桥默认是 `safe`，不是 `recon` 或 `live`**：只写日志，不读取游戏内存、不发 UDP、不注册菜单。先确认 addon 加载成功。
 3. 按 [Hook 文档第 9 节](docs/HOOK.md#9-模式阶梯与两起真实事故必读) 逐级验证：`safe → net → menu → recon → live`。`net` 检查通信，`menu` 检查菜单，`recon` 一次性验证构建、本地 Avatar 与生命记录。
-4. 0.5.6 无需填写偏移。`live` 会校验受支持构建后自动读取；游戏更新导致指纹不匹配时应等待新 profile，不要手填地址绕过。
+4. 0.6.3 的 `live` 会优先使用 HD2Runtime 公开 API；确认 Bingus Shared Loader 与 HD2Runtime 均已安装。只有 Runtime 缺失时才降级到旧 profile，不要手填地址绕过。
 5. 使用 Mock、保持未武装，确认桌面端显示的血量、受伤、阵亡与复活均与游戏一致后，才进入下一步连接真机。
 
 **配置统一在 Fluent 桌面版或桥配置文件中修改，修改后需重启游戏。** 游戏内 MODS 菜单只显示连接信息和最近日志，不再提供配置控制项；重新打开 ESC 刷新信息。

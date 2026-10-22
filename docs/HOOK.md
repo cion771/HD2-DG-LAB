@@ -18,21 +18,20 @@
 
 ## 2. 状态来源
 
-0.5.1 起已移除截图、像素识别与 HUD 标定。控制器仅接收结构化状态/事件：默认 `game_bridge`（本机 UDP），可选 `http`，由 `sources.enabled` 配置。旧 `source = "vision"` 配置读取时迁移为事件源模式。
+0.5.1 曾移除旧截图方案；0.6.4 新增独立进程 HUD 视觉源（默认关闭，须先校准），详见 [EAC 与视觉源](EAC.md)。控制器统一接收结构化状态/事件：默认 `game_bridge`，可选 `http` 或 `vision`，由 `sources.enabled` 配置。旧配置中的 `source = "vision"` 可迁移到 `sources.enabled = ["vision"]`。
 
-游戏桥无需屏幕标定，也不再让用户手填字段偏移。0.5.6 内置当前受支持构建的只读 profile，并在运行时验证 `game.dll` 映像与关键指令；游戏更新后不匹配会安全拒绝，仍不能保证反作弊兼容或账号安全。
+游戏桥无需屏幕标定，也不再让用户手填字段偏移。0.6.3 起优先使用 HD2Runtime 的公开只读 API；旧 profile 仅作历史构建降级。HD2Runtime 会验证当前游戏构建，不匹配时桥安全拒绝，仍不能保证反作弊兼容或账号安全。
 
 ## 3. 数据链路
 
 ```
 《绝地潜兵 2》进程
- ├─ Bingus Shared Loader v15+（把 addon 当 Lua 资源加载）
+ ├─ Bingus Shared Loader v18+（加载 Lua addon）
+ ├─ HD2Runtime 0.31+（适配当前构建并提供公开只读玩家 API）
  └─ mods/hd2coyote/hd2_coyote_bridge   ← lua/hd2_coyote_bridge.lua
-      ├─ 环境闸门（API 1 / loader 版本 / FFI 可用性）
-      ├─ 只读内存读取器（u8/u32/i32/指针，每次读取前 VirtualQuery 验址）
-      ├─ 校验 game.dll PE 映像大小与七处关键指令指纹
-      ├─ 本地用户 → 玩家槽 → Avatar network id → 本机拥有的 Helldiver 实体
-      ├─ health manager 读 hp / hp_max / 六肢原生伤势 / 倒地与阵亡
+      ├─ 优先：HD2Runtime local_player / health / damage / death / spawn
+      ├─ 降级：旧构建才使用 VirtualQuery + 经指纹验证的 game.dll profile
+      ├─ 本地玩家 HP / hp_max / 阵亡；Runtime 路径暂不伪造肢体伤势
       └─ 通过 FFI 调 ws2_32.sendto → UDP 127.0.0.1:47777
                     │
                     ▼
@@ -63,9 +62,9 @@
 
 ## 5. 自动读取与 recon
 
-0.5.6 的 `steam_25480438` profile 对应游戏构建 `1.8.46015.0`。它的地址全部是 `game.dll` RVA，不是 `helldivers2.exe` 地址。桥获取 `game.dll` 基址后，先验证 PE `SizeOfImage` 与七处关键指令，再沿游戏自己的管理器结构自动定位本地 Avatar 和生命记录。
+0.6.3 起，`live` / `recon` 优先 `require('mods/skyeshade/hd2runtime')`，通过 HD2Runtime 公开 API 读取本地玩家 HP、最大 HP、存活状态，并订阅伤害、阵亡与复活事件。只要 HD2Runtime 支持当前游戏构建，桥就不需要自己的偏移更新。
 
-用户配置只能选择 mode、port、interval 和 profile，不能覆盖内存布局；旧配置里的 `profiles` 会被忽略。这样旧版本留下的示例值不会绕过新构建校验。
+当前公开 API 没有只读肢体伤势查询，所以 Runtime 路径发送六个 `0`，不触发肢体伤势事件。旧 `steam_25480438` profile 仍对应游戏构建 `1.8.46015.0`，仅在 HD2Runtime 未安装时降级使用；它仍会验证 PE 映像与七处关键指令。用户配置不能覆盖内存布局。
 
 ### 建议验证步骤
 
@@ -80,7 +79,7 @@ notepad "%LOCALAPPDATA%\hd2coyote\hd2_coyote_status.txt"
 notepad "%LOCALAPPDATA%\hd2coyote\recon_report.txt"
 ```
 
-`recon` 只执行一次，报告构建、Avatar 实体及 health 解析结果；`live` 持续读取，飞船切换/重生时数据暂时消失会自动重试。构建不匹配时不要手填地址，应等待发布适配该构建的新 profile。
+`recon` 在 HD2Runtime 路径检查 Runtime 构建状态和本地玩家生命 API；`live` 持续读取，飞船切换/重生时数据暂时消失会自动等待。Runtime 缺失时才降级到旧 profile。构建不匹配时不要手填地址，应先更新 HD2Runtime。
 
 ### 每帧钩子
 

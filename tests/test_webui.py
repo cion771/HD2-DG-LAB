@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import tempfile
 import time
@@ -21,7 +22,7 @@ from pathlib import Path
 from unittest import mock
 
 from hd2coyote import __version__
-from hd2coyote.config import AppConfig
+from hd2coyote.config import AppConfig, Box
 from hd2coyote.webui import (BRIDGE_MODES, WebApp, bridge_config_path, build_server,
                              parse_bridge_config, render_bridge_config, write_bridge_config)
 
@@ -118,6 +119,41 @@ class TestWebServer(unittest.TestCase):
         self.httpd.server_close()
         self.thread.join(timeout=3)
         self.tmp.cleanup()
+
+    @unittest.skipUnless(importlib.util.find_spec("numpy"), "需要 numpy 才能模拟 HUD")
+    def test_calibration_requires_confirmation_before_saving(self) -> None:
+        import numpy as np
+        frame = np.zeros((450, 800, 3), dtype=np.uint8)
+        frame[390:398, 300:450] = 230
+        frame[390:398, 450:500] = 45
+        with mock.patch("hd2coyote.sources.vision.capture_game_client",
+                        return_value=(frame, (0, 0, 800, 450))):
+            status, result = http("POST", self.base + "/api/vision/calibrate", {"delay_s": 0})
+        self.assertEqual(status, 200, result)
+        self.assertTrue(result["preview"].startswith("data:image/png;base64,"))
+        self.assertEqual(result["box"]["x"], 300)
+        self.assertIsNone(self.app.cfg.vision.hp_bar)
+        self.assertFalse(self.app.engine.safety.armed)
+
+        status, body = http("POST", self.base + "/api/config",
+                            {"vision": {"hp_bar": result["box"], "auto_locate": False}})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.app.cfg.vision.hp_bar, Box(**result["box"]))
+        self.assertFalse(self.app.engine.safety.armed)
+        self.assertTrue(self.config_path.exists())
+
+        status, _ = http("POST", self.base + "/api/config",
+                         {"vision": {"hp_bar": {"x": 0, "y": 0, "w": 2, "h": 8}}})
+        self.assertEqual(status, 400)
+        self.assertEqual(self.app.cfg.vision.hp_bar, Box(**result["box"]))
+
+    def test_calibration_missing_game_returns_client_error(self) -> None:
+        with mock.patch("hd2coyote.sources.vision.capture_game_client",
+                        side_effect=RuntimeError("没有找到游戏窗口")):
+            status, body = http("POST", self.base + "/api/vision/calibrate", {"delay_s": 0})
+        self.assertEqual(status, 400)
+        self.assertIn("没有找到游戏窗口", body["error"])
+        self.assertFalse(self.app.engine.safety.armed)
 
     # ------------------------------------------------------------ 页面
     def test_page_is_self_contained(self) -> None:
