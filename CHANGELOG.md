@@ -5,7 +5,7 @@
 
 ---
 
-## 未发布（Rust 客户端接入 vision）
+## 0.6.5
 
 - 新增 crate `hd2-source-vision`：把 0.6.4 的 `vision` 外部 HUD 源移植进 Rust 客户端。
   它只做三件事——枚举窗口找 `HELLDIVERS` 客户区、用 GDI `BitBlt` 抓一帧、按亮度分布
