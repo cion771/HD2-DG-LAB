@@ -387,6 +387,47 @@ async fn vision_surfaces_idle_source_and_rejects_bad_delay() {
 }
 
 #[tokio::test]
+async fn unimplemented_sources_report_null_alive() {
+    // Rust 客户端只接了 vision。game_bridge / http / udp 的名字可以留在配置里，
+    // 但它们在本进程没有采集端——绝不能用 running 冒充存活。
+    let (_dir, state) = fixture().await;
+    let app = router(state);
+
+    let status = json(
+        app.clone()
+            .oneshot(request("GET", "/api/status", None))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let entries = status["controller"]["sources"].as_array().unwrap();
+    let bridge = entries
+        .iter()
+        .find(|entry| entry["name"] == "game_bridge")
+        .expect("默认配置启用 game_bridge");
+    assert_eq!(bridge["implemented"], false);
+    assert_eq!(bridge["alive"], Value::Null);
+
+    let sources = json(
+        app.oneshot(request("GET", "/api/sources", None))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(sources["implemented"], json!(["vision"]));
+    let bridge = sources["runtime"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "game_bridge")
+        .cloned()
+        .expect("runtime 里应有 game_bridge");
+    assert_eq!(bridge["implemented"], false);
+    assert_eq!(bridge["alive"], Value::Null);
+    assert_eq!(bridge["running"], false);
+}
+
+#[tokio::test]
 async fn vision_config_is_validated() {
     let (_dir, state) = fixture().await;
     let app = router(state);

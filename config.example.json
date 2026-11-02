@@ -12,6 +12,26 @@
     "port": 47777,
     "timeout_s": 2
   },
+  "sources": {
+    "enabled": [
+      "game_bridge"
+    ],
+    "http_host": "127.0.0.1",
+    "http_port": 47778,
+    "http_token": "",
+    "http_max_per_s": 20,
+    "http_timeout_s": 3
+  },
+  "vision": {
+    "monitor": 1,
+    "fps": 10,
+    "backend": "mss",
+    "hp_bar": null,
+    "auto_locate": false,
+    "brightness": 165,
+    "stale_timeout_s": 1.5,
+    "error_limit": 30
+  },
   "hud": {
     "injury_slots": 3,
     "injury_slot_names": [

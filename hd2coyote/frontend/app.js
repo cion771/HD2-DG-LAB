@@ -107,7 +107,7 @@ function render(s) {
   const limbNames = ['头部','胸部','左臂','右臂','左腿','右腿'];
   text('limbs',vision ? '视觉源仅测血量' : hasData ? (c.limbs.map((x,i) => x ? limbNames[i] || '部位' + (i + 1) : '').filter(Boolean).join('、') || '未检测到损伤') : '等待有效数据');
   text('rampValue',c.ramp.enabled ? c.ramp.pct + '% / ' + c.ramp.ceiling_pct + '%' : '未启用');
-  text('src',(c.sources || []).map(x => x.label + ' · ' + (x.alive ? '在线' : '等待')).join('；') || '尚未启动');
+  text('src',(c.sources || []).map(x => x.label + ' · ' + (x.implemented === false ? '本客户端未实现' : x.alive ? '在线' : '等待')).join('；') || '尚未启动');
   text('sourceBadge','事件源');
   const key = d.qr_url || '';
   if (key !== qrKey) { qrKey = key; $('qrwrap').replaceChildren(); if (key) { const img = node('img'); img.alt = 'DG-LAB App 连接二维码，请勿分享'; img.src = '/qr.svg?t=' + Date.now(); img.onerror = () => { img.remove(); $('qrwrap').prepend(node('span','','二维码不可用，请检查设备服务。')); }; $('qrwrap').append(img,node('code','',key)); } }

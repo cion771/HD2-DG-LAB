@@ -69,6 +69,25 @@ Release 说明会明确标注桥协议或游戏布局是否改变：
 - 旧 steam_25480438 profile 仅在 HD2Runtime 未安装时作为降级路径；
 - HD2Runtime 路径读取 HP、最大 HP、伤害、阵亡与复活；肢体伤势保持未触发，直到公开 API 提供只读状态。
 
+## 0.6.4 配置兼容性
+
+从 0.6.3 更新到 0.6.4 时，旧配置可以继续读取：
+
+- 新增 `vision` 段（`monitor` / `fps` / `backend` / `hp_bar` / `auto_locate` / `brightness` / `stale_timeout_s` / `error_limit`）。整段缺失时全部取内置默认值，默认仍只启用 `game_bridge`，不抓屏。
+- 缺少 `vision` 段时，旧 `capture.*`（`monitor` / `fps` / `backend`）与 `hud.hp_bar` 会迁移成 `vision` 的对应字段；迁移后不再读取旧键，但旧键留在文件里也无害。
+- `source: "vision"` 且没有 `sources` 段时，自动补成 `sources.enabled = ["vision"]`。
+- 视觉源默认关闭。打开它必须先校准血条，结果写回 `vision.hp_bar`；未校准或游戏不在前台时不会发布读数，输出保持静音。
+- 回滚到 0.6.3 时，`vision` 段会被忽略；如果你在 0.6.4 里改过 `sources.enabled`，回滚前确认它仍包含 `game_bridge`。
+
+## 0.6.5 配置兼容性
+
+0.6.5 只改 Rust 客户端，Python 桌面程序与游戏桥的行为不变：
+
+- **游戏桥不需要重新部署。** 0.6.5 的桥 ZIP 与 0.6.4 相比，只有 Lua 里 `local VERSION` 的一个字节不同，其余逐字节相同。
+- **桌面 EXE 功能等同 0.6.4。** Python 包只有 `__version__` 变化；替换 EXE 即可，不需要动配置。
+- Rust 客户端的配置新增 `vision` 段（与 Python 的 `VisionConfig` 同名同义）；缺省时取默认值。两个客户端的 `vision` 字段名一致，同一份 `config.json` 可以互读。Python 侧读取未知键时会忽略，因此 Rust 写入的配置不会让 Python 报错。
+- Rust 客户端目前只实现 `vision` 一个事件源。`game_bridge` / `http` / `udp` 的名字可以留在 `sources.enabled` 里（为了和 Python 桌面版共用配置），但本进程没有对应采集端：`/api/status` 对它们返回 `alive: null` 与 `implemented: false`，界面显示"本客户端未实现"，不会显示成在线。
+
 ## 故障报告
 
 报告问题时可提供程序版本、公开 Release 资产哈希、错误文本和已脱敏的复现步骤。不要提交真实二维码、局域网 IP、配对 URL、配置文件、日志原件、内存转储或包含用户名的绝对路径。

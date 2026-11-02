@@ -28,7 +28,7 @@ use hd2_core::{
     waves::{self, FREQ_MAX, FREQ_MIN, UNIT_MS},
 };
 use hd2_dglab::{Config as DeviceConfig, DgLabDevice};
-use hd2_source_vision::VisionSource;
+use hd2_source_vision::{VisionSnapshot, VisionSource};
 use qrcode::{QrCode, render::svg};
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, Notify, RwLock};
@@ -384,11 +384,8 @@ async fn status(State(state): State<AppState>) -> Json<Value> {
         .enabled
         .iter()
         .map(|name| {
-            let alive = match name.as_str() {
-                "vision" => vision.as_ref().is_some_and(|snapshot| snapshot.alive),
-                _ => rt.running,
-            };
-            json!({"name":name,"label":source_label(name),"alive":alive})
+            let (implemented, alive) = source_state(name, vision.as_ref());
+            json!({"name":name,"label":source_label(name),"alive":alive,"implemented":implemented})
         })
         .collect::<Vec<_>>();
     let vision_json = json!({
@@ -607,6 +604,21 @@ async fn stop_vision(vision: Option<VisionSource>) {
     }
 }
 
+/// 一个事件源在本进程里的实现状态与存活状态。
+///
+/// Rust 客户端目前只接了 `vision`。`game_bridge` / `http` / `udp` 是 Python
+/// 桌面版才有的采集端，名字保留在 `sources.enabled` 里是为了两个客户端共用
+/// 一份 `config.json` —— 但它们在本进程里没有任何东西在跑。这种情况必须报
+/// `alive: null` + `implemented: false`：拿 `running` 冒充存活，界面就会告诉
+/// 用户"桥在线"，而底下什么也没有。
+fn source_state(name: &str, vision: Option<&VisionSnapshot>) -> (bool, Value) {
+    if name == hd2_source_vision::NAME {
+        (true, json!(vision.is_some_and(|snapshot| snapshot.alive)))
+    } else {
+        (false, Value::Null)
+    }
+}
+
 fn source_label(name: &str) -> &str {
     match name {
         "game_bridge" => "游戏内桥",
@@ -625,18 +637,16 @@ async fn sources(State(state): State<AppState>) -> Json<Value> {
         .enabled
         .iter()
         .map(|name| {
-            let alive = match name.as_str() {
-                "vision" => vision.as_ref().is_some_and(|snapshot| snapshot.alive),
-                // 其它源由各自的子进程/推送方驱动，Rust 端只看是否在跑检测。
-                _ => rt.running,
-            };
-            json!({"name":name,"label":source_label(name),"running":rt.running,"alive":alive})
+            let (implemented, alive) = source_state(name, vision.as_ref());
+            json!({"name":name,"label":source_label(name),"running":rt.running,"alive":alive,"implemented":implemented})
         })
         .collect::<Vec<_>>();
     Json(json!({
         "ok":true,
         "engine_source":rt.cfg.source,
         "catalog":[{"name":"game_bridge","label":"游戏内桥","hint":"接收本机 Lua 桥遥测"},{"name":"http","label":"HTTP 上报","hint":"由外部工具上报事件"},{"name":"udp","label":"UDP 上报","hint":"兼容 UDP 游戏桥"},{"name":"vision","label":"外部 HUD 视觉（EAC 兼容）","hint":hd2_source_vision::HINT}],
+        // Rust 端只实现了 vision；其余源保留名字是为了与 Python 桌面版共用配置。
+        "implemented":[hd2_source_vision::NAME],
         "enabled":rt.cfg.sources.enabled,
         "running":rt.running,
         "runtime":runtime,
