@@ -1,0 +1,21 @@
+[package]
+name = "hd2-source-vision"
+version = "0.6.4"
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+description = "External HUD vision source: reads the HP bar from the game window client area without touching the game process."
+
+[dependencies]
+hd2-core = { path = "../hd2-core" }
+hd2-controller = { path = "../hd2-controller" }
+thiserror = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_HiDpi",
+  "Win32_System_Threading",
+] }

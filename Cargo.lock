@@ -464,6 +464,7 @@ dependencies = [
  "clap",
  "hd2-core",
  "hd2-dglab",
+ "hd2-source-vision",
  "http",
  "qrcode",
  "reqwest",
@@ -526,6 +527,16 @@ version = "0.6.4"
 dependencies = [
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "hd2-source-vision"
+version = "0.6.4"
+dependencies = [
+ "hd2-controller",
+ "hd2-core",
+ "thiserror",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

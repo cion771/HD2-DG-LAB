@@ -4,6 +4,7 @@ members = [
   "crates/hd2-core",
   "crates/hd2-source-udp",
   "crates/hd2-source-http",
+  "crates/hd2-source-vision",
   "crates/hd2-dglab",
   "crates/hd2-controller",
   "crates/hd2-app",

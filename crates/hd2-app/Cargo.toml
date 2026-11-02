@@ -10,6 +10,7 @@ axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 hd2-core = { path = "../hd2-core" }
 hd2-dglab = { path = "../hd2-dglab" }
+hd2-source-vision = { path = "../hd2-source-vision" }
 http = "1"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

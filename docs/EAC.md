@@ -20,7 +20,7 @@
 | 行为 | 是否执行 |
 | --- | --- |
 | `EnumWindows` / `GetClientRect` 只读窗口几何 | 是 |
-| 桌面复制（mss / ImageGrab）截取游戏窗口客户区 | 是 |
+| 抓取游戏窗口客户区像素（Python: `mss`/`ImageGrab`；Rust: GDI `BitBlt`） | 是 |
 | `OpenProcess` / `ReadProcessMemory` | 否 |
 | 写入游戏内存、加载 DLL 进游戏、注入 Lua | 否 |
 | 修改游戏文件或绕过反作弊 | 否 |
@@ -44,6 +44,8 @@
    ./.venv/Scripts/python.exe -m pip install -r requirements-desktop.txt
    ```
 
+   Rust 客户端不需要额外依赖：`hd2-source-vision` 直接链接 `user32`/`gdi32`。
+
 2. 进入**任务中**并保持 HUD 可见。Python 桌面版“事件源”页点击“校准血条”，
    5 秒内切回游戏；程序会停止检测并保持静音。切回桌面后先查看候选血条
    预览与 HP 读数，确认无误再保存。游戏须位于前台，不能在飞船/菜单。
@@ -66,7 +68,12 @@
 
    上述 `x/y/w/h` 是占位示例，必须用校准输出替换。默认关闭自动定位；手动启用 `auto_locate` 仍需核对候选位置。
 
-4. 在“事件源”页**只勾选 vision**，取消 game_bridge，然后保存并手动开始检测。状态卡应显示实时 HP；如未校准或游戏不在前台，输出保持静音。当前 Rust CLI/本地 API 尚未接入 `vision` 适配器。
+4. 在“事件源”页**只勾选 vision**，取消 game_bridge，然后保存并手动开始检测。状态卡应显示实时 HP；如未校准或游戏不在前台，输出保持静音。
+
+   Rust 客户端（`crates/hd2-source-vision`，GDI 实现，无额外依赖）的对应操作是：
+   - 把 `sources.enabled` 写成 `["vision"]` 后保存，页面点“开始检测”，视觉源随检测一起启动；
+   - 校准：游戏在任务画面且前台时 `POST /api/vision/calibrate {"delay_s":5}`（页面上的“校准血条”按钮同款），返回 `box`、`hp_pct` 和 `preview` 预览图；确认无误后前端写回 `vision.hp_bar`；
+   - 观察：`GET /api/vision`，`alive=false` 时 `note` 会说明原因（窗口没找到 / 不在前台 / 黑帧 / 未定位到血条）。
 
 5. 旧游戏桥补丁 `9ba626afa44a3aa3.patch_0` 已从当前游戏目录撤下并备份至本地 `build/rollback-bridge-0.6.3/`。若模组管理器重新 Deploy，会再次写入补丁；需要在管理器中禁用本项目桥。其他模组未改动。
 
@@ -75,5 +82,6 @@
 - 只读取**血量**与由此推导的伤害、低血量、阵亡；肢体伤势需要 HUD 图标区域，
   当前未实现，因此不会伪造断肢事件。
 - 需要窗口化/无边框模式；独占全屏下桌面复制可能拿到黑帧，此时源会明确报错。窗口标题必须与内置游戏标题或自定义 `safety.game_window_title` 完整匹配。
+- Rust 与 Python 的判定阈值一致，但抓屏实现不同（GDI 与 mss），同一帧的读数可能在最后一位小数上不同；两者都过同一个 250ms 合并窗口。
 - 视觉读数天然有噪声，伤害合并窗口默认 250ms 用于抑制同一击被拆成多次。
 - 仍需人工核对读数与游戏内血条一致，再考虑连接真机。

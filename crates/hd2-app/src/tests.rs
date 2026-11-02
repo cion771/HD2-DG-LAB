@@ -295,3 +295,129 @@ async fn update_endpoint_is_check_only_and_cache_can_be_cleared() {
     assert!(cleared["current"].is_string());
     assert!(cleared["ok"].is_null());
 }
+
+#[tokio::test]
+async fn vision_surfaces_idle_source_and_rejects_bad_delay() {
+    let (_dir, state) = fixture().await;
+    let app = router(state);
+
+    let idle = json(
+        app.clone()
+            .oneshot(request("GET", "/api/vision", None))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(idle["ok"], true);
+    assert_eq!(idle["active"], false);
+    assert_eq!(idle["alive"], false);
+    assert_eq!(idle["detail"], "视觉源未启动");
+    assert!(idle["fps"].is_number());
+    assert!(idle["configured"].is_null() || idle["configured"].is_object());
+
+    // 越界的 delay_s 必须在碰窗口之前就被拒绝，否则会把校准拖进抓屏路径。
+    let response = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/vision/calibrate",
+            Some(json!({"delay_s": 99})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(json(response).await["error"].as_str().is_some());
+
+    let status = json(
+        app.clone()
+            .oneshot(request("GET", "/api/status", None))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let vision = &status["controller"]["vision"];
+    assert_eq!(vision["alive"], false);
+    assert_eq!(vision["hp"], Value::Null);
+    let entry = |body: &Value| -> Option<Value> {
+        body["controller"]["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["name"] == "vision")
+            .cloned()
+    };
+    // 默认只启用 game_bridge，vision 不该混进"已启用源"列表。
+    assert!(entry(&status).is_none());
+
+    let enabled = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/config",
+            Some(json!({"sources": {"enabled": ["vision"]}})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(enabled.status(), StatusCode::OK);
+    let status = json(
+        app.clone()
+            .oneshot(request("GET", "/api/status", None))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let entry = entry(&status).expect("启用后 vision 应出现在 sources 里");
+    assert_eq!(entry["alive"], false);
+    assert_eq!(entry["label"], "外部 HUD 视觉（EAC 兼容）");
+
+    let sources = json(
+        app.oneshot(request("GET", "/api/sources", None))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        sources["catalog"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["name"] == "vision")
+    );
+    assert_eq!(sources["vision"]["active"], false);
+}
+
+#[tokio::test]
+async fn vision_config_is_validated() {
+    let (_dir, state) = fixture().await;
+    let app = router(state);
+    for patch in [
+        json!({"vision": {"fps": 0}}),
+        json!({"vision": {"fps": 31}}),
+        json!({"vision": {"brightness": 0}}),
+        json!({"vision": {"stale_timeout_s": 0.1}}),
+        json!({"vision": {"hp_bar": {"x": -4, "y": 0, "w": 100, "h": 8}}}),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(request("POST", "/api/config", Some(patch)))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "应当拒绝非法视觉配置"
+        );
+    }
+
+    let ok = app
+        .oneshot(request(
+            "POST",
+            "/api/config",
+            Some(json!({"vision": {"fps": 15, "brightness": 150}})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(ok.status(), StatusCode::OK);
+    let body = json(ok).await;
+    assert_eq!(body["ok"], true);
+}

@@ -5,6 +5,23 @@
 
 ---
 
+## 未发布（Rust 客户端接入 vision）
+
+- 新增 crate `hd2-source-vision`：把 0.6.4 的 `vision` 外部 HUD 源移植进 Rust 客户端。
+  它只做三件事——枚举窗口找 `HELLDIVERS` 客户区、用 GDI `BitBlt` 抓一帧、按亮度分布
+  算血条填充比例；不 `OpenProcess`、不读写游戏内存、不往游戏进程加载模块。
+- 判定阈值与 Python 版逐项一致（黑帧均值 0.6、峰值下限 110、相对阈值 0.55、
+  自动定位取画面下 45%、厚度上限 40），同一份 `config.json` 在两边得到同一个读数。
+- `hd2-core` 配置新增 `vision` 段（`backend`/`fps`/`hp_bar`/`auto_locate`/`brightness`/
+  `stale_timeout_s`/`error_limit`）与 `ScreenRect`；旧配置缺该段时取默认值。
+- `hd2-controller` 的 `SourceItem` 新增 `Resync`：视觉源断流恢复时先丢弃血量基线，
+  否则复播的第一帧会被当成一次巨大伤害。
+- `hd2-app` 接入：检测启动时若 `sources.enabled` 含 `vision` 则一并启动采样线程；
+  急停、停止检测、关闭程序三条路径都会先停掉它。新增 `GET /api/vision`（读数与原因）
+  和 `POST /api/vision/calibrate`（与 Python 桌面版同契约，返回候选区域、HP 与
+  放大预览）。前端“校准血条”按钮无需改动即可用。
+- 校准预览用 24 位 BMP data URL 现场生成，不引入 PNG 编码依赖。
+
 ## 0.6.4
 
 - 新增可选 `vision` 事件源：在游戏进程之外截取**游戏窗口客户区**并读取 HUD 血条，

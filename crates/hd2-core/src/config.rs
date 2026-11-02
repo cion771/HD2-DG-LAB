@@ -22,6 +22,33 @@ cfg!(HookConfig {
 });
 cfg!(SourcesConfig { enabled:Vec<String>=vec!["game_bridge".into()], http_host:String="127.0.0.1".into(), http_port:u16=47778, http_token:String=String::new(), http_max_per_s:f64=20.0, http_timeout_s:f64=3.0 });
 cfg!(HudConfig { injury_slots:usize=3, injury_slot_names:Vec<String>=vec!["左肢".into(),"躯干".into(),"右肢".into()] });
+// 屏幕矩形；视觉源使用相对于游戏窗口客户区左上角的像素坐标。
+cfg!(ScreenRect {
+    x: i32 = 0,
+    y: i32 = 0,
+    w: i32 = 0,
+    h: i32 = 0
+});
+impl ScreenRect {
+    /// 与 Python `Box.is_valid` 一致：宽高都必须大于 1 像素。
+    pub fn is_valid(&self) -> bool {
+        self.w > 1 && self.h > 1
+    }
+}
+// 4 个 i32，按值传递比借用省事；显式 Copy 让 `Option<ScreenRect>` 也能直接复制。
+impl Copy for ScreenRect {}
+// 外部 HUD 视觉源配置。字段名与 Python `VisionConfig` 保持一致。
+// `backend` 只为读取旧配置而保留：Rust 端只有 GDI 一种抓屏实现。
+cfg!(VisionConfig {
+    backend: String = "gdi".into(),
+    monitor: u32 = 1,
+    fps: f64 = 10.0,
+    hp_bar: Option<ScreenRect> = None,
+    auto_locate: bool = false,
+    brightness: f64 = 165.0,
+    stale_timeout_s: f64 = 1.5,
+    error_limit: u32 = 30
+});
 cfg!(DetectConfig {
     damage_min_pct: f64 = 4.0,
     damage_merge_window_ms: f64 = 250.0,
@@ -126,6 +153,7 @@ pub struct AppConfig {
     pub device: DeviceConfig,
     pub hook: HookConfig,
     pub sources: SourcesConfig,
+    pub vision: VisionConfig,
     pub hud: HudConfig,
     pub detect: DetectConfig,
     pub safety: SafetyConfig,
@@ -142,6 +170,7 @@ impl Default for AppConfig {
             device: Default::default(),
             hook: Default::default(),
             sources: Default::default(),
+            vision: Default::default(),
             hud: Default::default(),
             detect: Default::default(),
             safety: Default::default(),

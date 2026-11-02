@@ -28,6 +28,7 @@ use hd2_core::{
     waves::{self, FREQ_MAX, FREQ_MIN, UNIT_MS},
 };
 use hd2_dglab::{Config as DeviceConfig, DgLabDevice};
+use hd2_source_vision::VisionSource;
 use qrcode::{QrCode, render::svg};
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, Notify, RwLock};
@@ -86,6 +87,8 @@ struct Runtime {
     events: VecDeque<String>,
     update: Value,
     closing: bool,
+    /// 外部 HUD 视觉源。仅在 `sources.enabled` 含 `vision` 且已开始检测时存在。
+    vision: Option<VisionSource>,
 }
 impl Runtime {
     fn new(cfg: AppConfig) -> Self {
@@ -107,6 +110,7 @@ impl Runtime {
             events: VecDeque::new(),
             update,
             closing: false,
+            vision: None,
         }
     }
     fn note(&mut self, text: impl Into<String>) {
@@ -180,6 +184,9 @@ impl AppState {
             rt.safety.trip("程序关闭");
             rt.output_a = 0;
             rt.output_b = 0;
+            if let Some(mut vision) = rt.vision.take() {
+                vision.stop();
+            }
             rt.device.take()
         };
         if let Some(device) = device {
@@ -199,6 +206,9 @@ impl AppState {
             rt.output_b = 0;
             if stop_device {
                 rt.running = false;
+                if let Some(mut vision) = rt.vision.take() {
+                    vision.stop();
+                }
                 rt.device.take()
             } else {
                 rt.device.clone()
@@ -232,6 +242,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/waves", get(waves_get).post(waves_post))
         .route("/api/update", get(update_get).post(update_post))
         .route("/api/bridge", post(bridge_post))
+        .route("/api/vision", get(vision_get))
+        .route("/api/vision/calibrate", post(vision_calibrate))
         .route("/api/actions", post(actions_post))
         .route("/api/event", post(event_post))
         .layer(DefaultBodyLimit::max(MAX_JSON_BYTES))
@@ -364,13 +376,42 @@ async fn status(State(state): State<AppState>) -> Json<Value> {
         .map(|s| s.qr_url.clone())
         .unwrap_or_default();
     rt.armed = rt.safety.armed();
+    // 视觉源在跑的把它读到的血量灌进 controller.hp，界面与规则看到同一份数据。
+    let vision = rt.vision.as_ref().map(VisionSource::snapshot);
+    if let Some(hp) = vision.as_ref().and_then(|snapshot| snapshot.hp) {
+        rt.hp_pct = Some((hp * 100.0).clamp(0.0, 100.0));
+    }
+    let source_list = rt
+        .cfg
+        .sources
+        .enabled
+        .iter()
+        .map(|name| {
+            let alive = match name.as_str() {
+                "vision" => vision.as_ref().is_some_and(|snapshot| snapshot.alive),
+                _ => rt.running,
+            };
+            json!({"name":name,"label":source_label(name),"alive":alive})
+        })
+        .collect::<Vec<_>>();
+    let vision_json = json!({
+        "configured": rt.cfg.vision.hp_bar,
+        "auto_locate": rt.cfg.vision.auto_locate,
+        "hp": vision.as_ref().and_then(|snapshot| snapshot.hp),
+        "rect": vision.as_ref().and_then(|snapshot| snapshot.rect),
+        "alive": vision.as_ref().is_some_and(|snapshot| snapshot.alive),
+        "capture_errors": vision.as_ref().map(|snapshot| snapshot.capture_errors).unwrap_or(0),
+        "age_s": vision.as_ref().and_then(|snapshot| snapshot.age_s),
+        "note": vision.as_ref().map(|snapshot| snapshot.note.clone()).unwrap_or_default(),
+        "detail": rt.vision.as_ref().map(VisionSource::describe).unwrap_or_else(|| "视觉源未启动".into()),
+    });
     let startup = json!({"ready_to_arm":rt.running&&connected,"armed":rt.armed,"steps":[
         {"id":"safety","label":"安全边界","ok":true,"detail":"安全上限已加载"},
         {"id":"device","label":"设备服务","ok":connected,"detail":if connected{"设备服务已连接"}else{"设备尚未连接"}},
         {"id":"detecting","label":"检测服务","ok":rt.running,"detail":if rt.running{"检测线程正在运行"}else{"尚未开始检测"}},
         {"id":"source","label":"事件数据","ok":rt.running,"detail":if rt.running{"事件入口已就绪"}else{"尚未开始检测"}}],"note":"检查向导不会自动武装输出；确认无误后仍需由你手动重新武装。"});
     Json(
-        json!({"controller":{"version":VERSION,"uptime_s":state.started.elapsed().as_secs_f64(),"running":rt.running,"detecting":rt.running,"source":rt.cfg.source,"hp":rt.hp_pct.map(|x|x/100.0),"hp_pct":rt.hp_pct,"limbs":rt.limbs,"output":{"a":rt.output_a,"b":rt.output_b,"pct":rt.output_a.max(rt.output_b) as f64 / 2.0},"armed":rt.armed,"mute_reason":rt.mute_reason,"session_seconds":rt.safety.session_seconds(),"device":{"kind":rt.cfg.device.kind,"connected":connected,"limit_a":limits.0,"limit_b":limits.1,"qr_url":qr_url},"hook":{"alive":false,"connected":false,"listening":rt.running&&rt.cfg.sources.enabled.iter().any(|s|s=="game_bridge"),"mode":"","detail":"Rust 本地 API 已就绪；等待游戏桥遥测。","version":"","build":"","profile":"","packets":0},"last_error":"","sources":rt.cfg.sources.enabled.iter().map(|name|json!({"name":name,"label":source_label(name),"alive":rt.running})).collect::<Vec<_>>(),"ramp":{"enabled":rt.cfg.ramp.enabled,"pct":0.0,"detail":"-","ceiling_pct":rt.cfg.ramp.ceiling_pct}},"events":rt.events,"bridge":bridge_info(&state.bridge_dir),"startup":startup,"update":rt.update}),
+        json!({"controller":{"version":VERSION,"uptime_s":state.started.elapsed().as_secs_f64(),"running":rt.running,"detecting":rt.running,"source":rt.cfg.source,"hp":rt.hp_pct.map(|x|x/100.0),"hp_pct":rt.hp_pct,"limbs":rt.limbs,"output":{"a":rt.output_a,"b":rt.output_b,"pct":rt.output_a.max(rt.output_b) as f64 / 2.0},"armed":rt.armed,"mute_reason":rt.mute_reason,"session_seconds":rt.safety.session_seconds(),"device":{"kind":rt.cfg.device.kind,"connected":connected,"limit_a":limits.0,"limit_b":limits.1,"qr_url":qr_url},"hook":{"alive":false,"connected":false,"listening":rt.running&&rt.cfg.sources.enabled.iter().any(|s|s=="game_bridge"),"mode":"","detail":"Rust 本地 API 已就绪；等待游戏桥遥测。","version":"","build":"","profile":"","packets":0},"last_error":"","sources":source_list,"vision":vision_json,"ramp":{"enabled":rt.cfg.ramp.enabled,"pct":0.0,"detail":"-","ceiling_pct":rt.cfg.ramp.ceiling_pct}},"events":rt.events,"bridge":bridge_info(&state.bridge_dir),"startup":startup,"update":rt.update}),
     )
 }
 async fn config_get(State(state): State<AppState>) -> Json<AppConfig> {
@@ -416,6 +457,27 @@ fn validate(c: &AppConfig) -> Result<()> {
     if c.sources.enabled.is_empty() {
         return Err(AppError::BadRequest("至少启用一个事件源".into()));
     }
+    if !(1.0..=30.0).contains(&c.vision.fps) {
+        return Err(AppError::BadRequest("vision.fps 必须在 1..30".into()));
+    }
+    if !(1.0..=255.0).contains(&c.vision.brightness) {
+        return Err(AppError::BadRequest(
+            "vision.brightness 必须在 1..255".into(),
+        ));
+    }
+    if !(0.5..=60.0).contains(&c.vision.stale_timeout_s) {
+        return Err(AppError::BadRequest(
+            "vision.stale_timeout_s 必须在 0.5..60".into(),
+        ));
+    }
+    if let Some(rect) = c.vision.hp_bar
+        && rect.is_valid()
+        && (rect.x < 0 || rect.y < 0)
+    {
+        return Err(AppError::BadRequest(
+            "vision.hp_bar 的 x/y 必须为非负整数".into(),
+        ));
+    }
     Ok(())
 }
 async fn save_atomic(path: &Path, cfg: &AppConfig) -> Result<()> {
@@ -460,6 +522,10 @@ async fn config_post(
     {
         let mut rt = state.inner.lock().await;
         rt.safety.set_config(cfg.safety.clone());
+        // 视觉源不需要重启就能换 fps / 血条区域 / 亮度：直接热更新采样参数。
+        if let Some(vision) = rt.vision.as_mut() {
+            vision.set_config(&cfg);
+        }
         rt.cfg = cfg;
         rt.note("配置已保存");
     }
@@ -468,30 +534,94 @@ async fn config_post(
     ))
 }
 
+async fn vision_get(State(state): State<AppState>) -> Json<Value> {
+    let rt = state.inner.lock().await;
+    let snapshot = rt.vision.as_ref().map(VisionSource::snapshot);
+    Json(json!({
+        "ok": true,
+        "configured": rt.cfg.vision.hp_bar,
+        "auto_locate": rt.cfg.vision.auto_locate,
+        "fps": rt.cfg.vision.fps,
+        "brightness": rt.cfg.vision.brightness,
+        "stale_timeout_s": rt.cfg.vision.stale_timeout_s,
+        "active": snapshot.is_some(),
+        "hp": snapshot.as_ref().and_then(|s| s.hp),
+        "rect": snapshot.as_ref().and_then(|s| s.rect),
+        "alive": snapshot.as_ref().is_some_and(|s| s.alive),
+        "capture_errors": snapshot.as_ref().map(|s| s.capture_errors).unwrap_or(0),
+        "age_s": snapshot.as_ref().and_then(|s| s.age_s),
+        "note": snapshot.as_ref().map(|s| s.note.clone()).unwrap_or_default(),
+        "detail": rt.vision.as_ref().map(VisionSource::describe).unwrap_or_else(|| "视觉源未启动".into()),
+    }))
+}
+
+/// `POST /api/vision/calibrate`：等玩家切回游戏，抓一帧候选血条并返回预览。
+///
+/// 与 Python 桌面版的同名接口同契约：先急停并停止检测（校准期间绝不输出），
+/// 等待 `delay_s` 秒，然后抓取、定位、回一张放大预览。**不自动保存**——
+/// 玩家看过预览、确认那真是血条之后，由前端调 `POST /api/config` 写回。
+async fn vision_calibrate(
+    State(state): State<AppState>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>> {
+    let delay = body.get("delay_s").and_then(Value::as_f64).unwrap_or(5.0);
+    if !(0.0..=10.0).contains(&delay) {
+        return Err(AppError::BadRequest("delay_s 必须在 0..10".into()));
+    }
+    state.mute("HUD 校准中", true).await;
+    if delay > 0.0 {
+        tokio::time::sleep(Duration::from_secs_f64(delay)).await;
+    }
+    let cfg = { state.inner.lock().await.cfg.clone() };
+    let probe = VisionSource::new(&cfg);
+    let (frame, rect, ratio) = probe
+        .calibrate_frame()
+        .map_err(|error| AppError::BadRequest(error.to_string()))?;
+    let preview = hd2_source_vision::preview_data_url(&frame, rect)
+        .ok_or_else(|| AppError::BadRequest("候选区域为空".into()))?;
+    Ok(Json(json!({
+        "ok": true,
+        "box": {"x":rect.x,"y":rect.y,"w":rect.w,"h":rect.h},
+        "hp_pct": ((ratio * 1000.0).round()) / 10.0,
+        "preview": preview,
+        "detail": "检测已停止且未武装。请核对预览是否为血条，再确认保存。",
+    })))
+}
+
 fn source_label(name: &str) -> &str {
     match name {
         "game_bridge" => "游戏内桥",
         "http" => "HTTP 上报",
         "udp" => "UDP 上报",
+        "vision" => "外部 HUD 视觉（EAC 兼容）",
         _ => "事件源",
     }
 }
 async fn sources(State(state): State<AppState>) -> Json<Value> {
     let rt = state.inner.lock().await;
+    let vision = rt.vision.as_ref().map(VisionSource::snapshot);
     let runtime = rt
         .cfg
         .sources
         .enabled
         .iter()
-        .map(|name| json!({"name":name,"label":source_label(name),"running":rt.running}))
+        .map(|name| {
+            let alive = match name.as_str() {
+                "vision" => vision.as_ref().is_some_and(|snapshot| snapshot.alive),
+                // 其它源由各自的子进程/推送方驱动，Rust 端只看是否在跑检测。
+                _ => rt.running,
+            };
+            json!({"name":name,"label":source_label(name),"running":rt.running,"alive":alive})
+        })
         .collect::<Vec<_>>();
     Json(json!({
         "ok":true,
         "engine_source":rt.cfg.source,
-        "catalog":[{"name":"game_bridge","label":"游戏内桥","hint":"接收本机 Lua 桥遥测"},{"name":"http","label":"HTTP 上报","hint":"由外部工具上报事件"},{"name":"udp","label":"UDP 上报","hint":"兼容 UDP 游戏桥"}],
+        "catalog":[{"name":"game_bridge","label":"游戏内桥","hint":"接收本机 Lua 桥遥测"},{"name":"http","label":"HTTP 上报","hint":"由外部工具上报事件"},{"name":"udp","label":"UDP 上报","hint":"兼容 UDP 游戏桥"},{"name":"vision","label":"外部 HUD 视觉（EAC 兼容）","hint":hd2_source_vision::HINT}],
         "enabled":rt.cfg.sources.enabled,
         "running":rt.running,
         "runtime":runtime,
+        "vision":{"configured":rt.cfg.vision.hp_bar,"auto_locate":rt.cfg.vision.auto_locate,"fps":rt.cfg.vision.fps,"brightness":rt.cfg.vision.brightness,"stale_timeout_s":rt.cfg.vision.stale_timeout_s,"active":vision.is_some(),"hp":vision.as_ref().and_then(|s|s.hp),"rect":vision.as_ref().and_then(|s|s.rect),"alive":vision.as_ref().is_some_and(|s|s.alive),"capture_errors":vision.as_ref().map(|s|s.capture_errors).unwrap_or(0),"note":vision.as_ref().map(|s|s.note.clone()).unwrap_or_default(),"detail":rt.vision.as_ref().map(|s|s.describe()).unwrap_or_else(||"视觉源未启动".into())},
         "http":{"host":rt.cfg.sources.http_host,"port":rt.cfg.sources.http_port,"url":format!("http://{}:{}/event",rt.cfg.sources.http_host,rt.cfg.sources.http_port),"token_required":!rt.cfg.sources.http_token.is_empty(),"max_per_s":rt.cfg.sources.http_max_per_s,"examples":{"damage":{"ev":"damage","severity":20},"death":{"ev":"death"},"state":{"ev":"state","hp":80,"hp_max":100,"limbs":[0,0,0]}}}
     }))
 }
@@ -615,6 +745,20 @@ async fn actions_post(
         }
         "start" => {
             let mut rt = state.inner.lock().await;
+            let wants_vision = rt
+                .cfg
+                .sources
+                .enabled
+                .iter()
+                .any(|name| name == hd2_source_vision::NAME);
+            if wants_vision && rt.vision.is_none() {
+                let mut source = VisionSource::new(&rt.cfg);
+                source
+                    .start()
+                    .map_err(|error| AppError::BadRequest(format!("视觉源启动失败：{error}")))?;
+                rt.vision = Some(source);
+                rt.note("外部 HUD 视觉源已启动；需在任务中校准血条");
+            }
             rt.running = true;
             rt.note("检测已启动（保持未武装）");
             Ok(Json(

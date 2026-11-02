@@ -63,6 +63,12 @@ impl Default for StateFrame {
 pub enum SourceItem {
     Event(Event),
     State(StateFrame),
+    /// 源主动要求丢弃已累积的检测状态并重建基线。
+    ///
+    /// 断流后恢复时必须这样做：恢复瞬间的血量差不是伤害，而
+    /// `HealthTracker` 只有丢掉 `prev` 才会建立新基线。引擎独占
+    /// `EventTrackers`，所以只能由源通过端口发这个信号。
+    Resync,
 }
 
 /// Ordered, pull-based adapter. Lifecycle and poll methods must return promptly.
@@ -302,6 +308,7 @@ impl Engine {
             for item in items {
                 match item {
                     SourceItem::Event(event) => self.handle_event(event, now)?,
+                    SourceItem::Resync => self.trackers.reset(),
                     SourceItem::State(frame) => {
                         self.ramp.note_hp(frame.hp);
                         let events = self.trackers.process(
