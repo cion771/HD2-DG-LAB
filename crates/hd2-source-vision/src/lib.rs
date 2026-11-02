@@ -393,14 +393,16 @@ impl VisionSource {
     fn stop_worker(&mut self) {
         *lock(&self.control.0) = true;
         self.control.1.notify_all();
-        if let Some(handle) = self.worker.take() {
-            // 线程按 Condvar 唤醒，通常立刻返回；join 只作为兜底。
-            let _ = handle.join();
-        }
+        let joined = self.worker.take().map(|handle| handle.join());
         self.started = false;
         let mut shared = lock(&self.shared);
         shared.valid = false;
         shared.hp = None;
+        // join 只有在采样线程 panic 时才返回 Err。这种情况必须让界面看得见：
+        // 否则用户会以为"已停止"，下次启动才发现根本没人采。
+        if matches!(joined, Some(Err(_))) {
+            shared.note = "采样线程异常退出（可能已在抓屏时 panic）".into();
+        }
     }
 }
 
@@ -544,9 +546,12 @@ fn run(
         if *guard {
             break;
         }
-        let _ = control
+        // 锁中毒说明另一条线程在持锁时 panic 过；采样线程没有不变量依赖这个值，
+        // 取回内部状态继续用，不必整个源跟着停摆。
+        let _guard = control
             .1
-            .wait_timeout_while(guard, remaining, |stopped| !*stopped);
+            .wait_timeout_while(guard, remaining, |stopped| !*stopped)
+            .unwrap_or_else(|poison| poison.into_inner());
     }
 }
 

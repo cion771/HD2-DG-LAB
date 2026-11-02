@@ -23,7 +23,7 @@ const PREVIEW_HEIGHT_FACTOR: u32 = 4;
 pub fn data_url(frame: &Frame, rect: ScreenRect) -> Option<String> {
     let region = crop(frame, rect)?;
     let (width, height) = preview_size(&region);
-    let scaled = scale(&region, width, height);
+    let scaled = scale(&region, width, height)?;
     let bmp = encode_bmp(&scaled);
     let mut url = String::with_capacity(bmp.len() / 3 * 4 + 24);
     url.push_str("data:image/bmp;base64,");
@@ -42,20 +42,25 @@ fn preview_size(region: &Frame) -> (u32, u32) {
 }
 
 /// 最近邻放大。血条只有十几个像素高，插值反而糊掉亮度分布。
-fn scale(frame: &Frame, width: u32, height: u32) -> Frame {
+///
+/// 只有尺寸积溢出时才返回 `None`——正常帧不会走到那条分支。
+fn scale(frame: &Frame, width: u32, height: u32) -> Option<Frame> {
     let source = frame.rgb();
     let source_width = frame.width().max(1);
     let source_height = frame.height().max(1);
-    let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+    let capacity = (width as usize)
+        .checked_mul(height as usize)?
+        .checked_mul(3)?;
+    let mut rgb = Vec::with_capacity(capacity);
     for y in 0..height {
         let sy = (y as u64 * source_height as u64 / height as u64) as u32;
         for x in 0..width {
             let sx = (x as u64 * source_width as u64 / width as u64) as u32;
             let base = ((sy * source_width + sx) * 3) as usize;
-            rgb.extend_from_slice(&source[base..base + 3]);
+            rgb.extend_from_slice(source.get(base..base + 3)?);
         }
     }
-    Frame::new(width, height, rgb).unwrap_or_else(|| Frame::new(1, 1, vec![0, 0, 0]).expect("1x1"))
+    Frame::new(width, height, rgb)
 }
 
 /// 编码 24 位未压缩 BMP（自底向上，行按 4 字节对齐）。

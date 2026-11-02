@@ -176,7 +176,7 @@ impl AppState {
 
     pub async fn safe_shutdown(&self) {
         self.pulse_generation.fetch_add(1, Ordering::SeqCst);
-        let device = {
+        let (device, vision) = {
             let mut rt = self.inner.lock().await;
             rt.closing = true;
             rt.running = false;
@@ -184,11 +184,9 @@ impl AppState {
             rt.safety.trip("程序关闭");
             rt.output_a = 0;
             rt.output_b = 0;
-            if let Some(mut vision) = rt.vision.take() {
-                vision.stop();
-            }
-            rt.device.take()
+            (rt.device.take(), rt.vision.take())
         };
+        stop_vision(vision).await;
         if let Some(device) = device {
             device.mute().await;
             device.stop().await;
@@ -197,7 +195,7 @@ impl AppState {
 
     async fn mute(&self, reason: &str, stop_device: bool) {
         self.pulse_generation.fetch_add(1, Ordering::SeqCst);
-        let device = {
+        let (device, vision) = {
             let mut rt = self.inner.lock().await;
             rt.armed = false;
             rt.safety.trip(reason);
@@ -206,14 +204,13 @@ impl AppState {
             rt.output_b = 0;
             if stop_device {
                 rt.running = false;
-                if let Some(mut vision) = rt.vision.take() {
-                    vision.stop();
-                }
-                rt.device.take()
+                (rt.device.take(), rt.vision.take())
             } else {
-                rt.device.clone()
+                (rt.device.clone(), None)
             }
         };
+        // 采样线程是 std::thread，join 会阻塞；放到阻塞池里，别卡住运行时。
+        stop_vision(vision).await;
         if let Some(device) = device {
             device.mute().await;
             if stop_device {
@@ -573,10 +570,16 @@ async fn vision_calibrate(
         tokio::time::sleep(Duration::from_secs_f64(delay)).await;
     }
     let cfg = { state.inner.lock().await.cfg.clone() };
-    let probe = VisionSource::new(&cfg);
-    let (frame, rect, ratio) = probe
-        .calibrate_frame()
-        .map_err(|error| AppError::BadRequest(error.to_string()))?;
+    // 找窗口 + BitBlt + 逐像素扫描是同步的 Win32 调用，放到阻塞池里做。
+    let probe = tokio::task::spawn_blocking(move || {
+        VisionSource::new(&cfg)
+            .calibrate_frame()
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| AppError::BadRequest(format!("校准任务异常退出：{error}")))?
+    .map_err(AppError::BadRequest)?;
+    let (frame, rect, ratio) = probe;
     let preview = hd2_source_vision::preview_data_url(&frame, rect)
         .ok_or_else(|| AppError::BadRequest("候选区域为空".into()))?;
     Ok(Json(json!({
@@ -586,6 +589,22 @@ async fn vision_calibrate(
         "preview": preview,
         "detail": "检测已停止且未武装。请核对预览是否为血条，再确认保存。",
     })))
+}
+
+/// 停掉视觉源。
+///
+/// 采样线程是 `std::thread`，`stop` 里的 `join` 会阻塞到线程收尾（最长一帧），
+/// 所以挪进阻塞池执行，别占着 tokio 的运行时线程。调用方必须先释放配置锁。
+async fn stop_vision(vision: Option<VisionSource>) {
+    let Some(mut vision) = vision else {
+        return;
+    };
+    if tokio::task::spawn_blocking(move || vision.stop())
+        .await
+        .is_err()
+    {
+        tracing::warn!("视觉源停止任务异常退出");
+    }
 }
 
 fn source_label(name: &str) -> &str {
@@ -744,20 +763,51 @@ async fn actions_post(
             ))
         }
         "start" => {
+            let (cfg, wants_vision) = {
+                let rt = state.inner.lock().await;
+                let wants = rt
+                    .cfg
+                    .sources
+                    .enabled
+                    .iter()
+                    .any(|name| name == hd2_source_vision::NAME);
+                (rt.cfg.clone(), wants)
+            };
+            let needs_vision = {
+                let rt = state.inner.lock().await;
+                wants_vision && rt.vision.is_none()
+            };
+            // `start` 要等采样线程报就绪（最长 4 秒），必须在阻塞池里等：
+            // 这条请求走的是 tokio 运行时线程，卡住它等于整站停摆。
+            let started = if needs_vision {
+                Some(
+                    tokio::task::spawn_blocking(move || {
+                        let mut source = VisionSource::new(&cfg);
+                        match source.start() {
+                            Ok(()) => Ok(source),
+                            Err(error) => Err(error.to_string()),
+                        }
+                    })
+                    .await
+                    .map_err(|error| {
+                        AppError::BadRequest(format!("视觉源启动任务异常退出：{error}"))
+                    })?,
+                )
+            } else {
+                None
+            };
+
             let mut rt = state.inner.lock().await;
-            let wants_vision = rt
-                .cfg
-                .sources
-                .enabled
-                .iter()
-                .any(|name| name == hd2_source_vision::NAME);
-            if wants_vision && rt.vision.is_none() {
-                let mut source = VisionSource::new(&rt.cfg);
-                source
-                    .start()
-                    .map_err(|error| AppError::BadRequest(format!("视觉源启动失败：{error}")))?;
-                rt.vision = Some(source);
-                rt.note("外部 HUD 视觉源已启动；需在任务中校准血条");
+            if let Some(started) = started {
+                match started {
+                    Ok(source) => {
+                        rt.vision = Some(source);
+                        rt.note("外部 HUD 视觉源已启动；需在任务中校准血条");
+                    }
+                    Err(error) => {
+                        return Err(AppError::BadRequest(format!("视觉源启动失败：{error}")));
+                    }
+                }
             }
             rt.running = true;
             rt.note("检测已启动（保持未武装）");
