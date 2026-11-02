@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const text = (id, value) => { $(id).textContent = value == null ? '—' : String(value); };
+const text = (id, value) => { $(id).textContent = value == null ? '暂无' : String(value); };
 const value = id => $(id).value;
 const number = id => { const n = Number(value(id)); if (!value(id).trim() || !Number.isFinite(n) || !$(id).checkValidity()) throw Error('请检查数值范围'); return n; };
 const RULE_NAMES = {damage:'受到伤害', limb_injury:'肢体损伤', death:'阵亡', low_health:'低血量'};
@@ -40,8 +40,8 @@ function markUnavailable(message, permanent = false) {
   text('connectionBanner',message); $('connectionBanner').hidden = false;
   text('serviceStatus',permanent ? '已关闭' : '连接中断'); text('serviceDetail',permanent ? '重新打开程序以使用' : '正在尝试重新连接');
   text('pollState',permanent ? '停止同步' : '状态未知'); text('sessionBadge',permanent ? '已关闭' : '连接中断');
-  ['outA','outB','outPct','hp','sess'].forEach(id => text(id,'—'));
-  ['meterA','meterB','hpbar'].forEach(id => { $(id).style.width = '0%'; });
+  ['outA','outB','outPct','hp','sess'].forEach(id => text(id,'暂无'));
+  ['meterA','meterB','hpbar'].forEach(id => { $(id).style.transform = 'scaleX(0)'; });
   text('armedBadge','状态未知'); text('deviceStatus','状态未知'); text('bridgeStatus','状态未知'); text('dev','状态未知');
   text('state','无法确认硬件输出，请在手机 App 核对并停止输出。');
   ['serviceDot','bridgeDot','deviceDot'].forEach(id => { $(id).className = 'status-dot neutral'; });
@@ -52,7 +52,7 @@ function markClosed(message) {
   text('shutdownBtn','已关闭');
 }
 function setBadge(id, label, cls = '') { text(id,label); $(id).className = 'badge ' + cls; }
-function width(id, current, limit = 100) { $(id).style.width = Math.max(0,Math.min(100,Number(current || 0) / Math.max(1,limit) * 100)) + '%'; }
+function width(id, current, limit = 100) { const k = Math.max(0,Math.min(100,Number(current || 0) / Math.max(1,limit) * 100)) / 100; $(id).style.transform = 'scaleX(' + k + ')'; }
 function renderEvents(events) {
   text('events',events.join('\n') || '暂无事件');
   const list = $('recentEvents'); list.replaceChildren();
@@ -68,7 +68,7 @@ function renderDiagnostics(b) {
   text('dwarn','配置文件不等于实际运行档位。写入后重启游戏，再检查 STATUS 与运行日志；分享前遮挡私人路径。');
 }
 function renderUpdate(u) {
-  text('upCur','v' + (u.current || '—')); text('upRepo',u.repo); text('upLatest',u.latest?.tag || '尚未检查');
+  text('upCur','v' + (u.current || '暂无')); text('upRepo',u.repo); text('upLatest',u.latest?.tag || '尚未检查');
   text('upInfo',u.ok === true ? (u.update_available ? '发现新版本，请自行查看发布页。' : '当前已是最新版本。') : u.error || '仅在点击时联网检查，不自动下载安装。');
   const link = $('upLink'); link.hidden = true; link.removeAttribute('href');
   try { const url = new URL(u.latest?.url || u.latest?.html_url); if (url.protocol === 'https:' && url.hostname === 'github.com') { link.href = url.href; link.hidden = false; } } catch (_) {}
@@ -103,7 +103,7 @@ function render(s) {
   setBadge('armedBadge',c.armed ? '已武装' : '已静音',c.armed ? 'warning' : 'quiet');
   text('state',c.last_error || c.mute_reason || (c.running ? '检测运行中，输出受安全上限约束。' : '尚未开始检测；请先确认设备与安全边界。'));
   const hpPct = c.hp_pct, hasData = validState && typeof hpPct === 'number' && Number.isFinite(hpPct);
-  text('hp',hasData ? Math.round(hpPct) + '%' : '—'); width('hpbar',hasData ? hpPct : 0);
+  text('hp',hasData ? Math.round(hpPct) + '%' : '暂无'); width('hpbar',hasData ? hpPct : 0);
   const limbNames = ['头部','胸部','左臂','右臂','左腿','右腿'];
   text('limbs',vision ? '视觉源仅测血量' : hasData ? (c.limbs.map((x,i) => x ? limbNames[i] || '部位' + (i + 1) : '').filter(Boolean).join('、') || '未检测到损伤') : '等待有效数据');
   text('rampValue',c.ramp.enabled ? c.ramp.pct + '% / ' + c.ramp.ceiling_pct + '%' : '未启用');
