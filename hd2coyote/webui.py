@@ -569,19 +569,17 @@ class WebApp:
         if isinstance(sources, dict) and sources:
             known = {item["name"] for item in source_catalog()}
             for key, value in sources.items():
-                if not hasattr(self.cfg.sources, key):
-                    continue
-                if key == "enabled":
-                    names = [str(x).strip() for x in (value or []) if str(x).strip()]
-                    unknown = [n for n in names if n not in known]
-                    if unknown:
-                        raise ValueError(f"未知事件源：{'、'.join(unknown)}"
-                                         f"（可用：{'、'.join(sorted(known))}）")
-                    if not names:
-                        raise ValueError("至少要启用一个事件源")
-                    self.cfg.sources.enabled = names
-                else:
-                    setattr(self.cfg.sources, key, value)
+                # 0.7.0 删掉了 http_*；认不出的字段必须报错，不能返回 200 却什么都没做
+                if key != "enabled":
+                    raise ValueError(f"未知的事件源字段：{key}（目前只有 enabled）")
+                names = [str(x).strip() for x in (value or []) if str(x).strip()]
+                unknown = [n for n in names if n not in known]
+                if unknown:
+                    raise ValueError(f"未知事件源：{'、'.join(unknown)}"
+                                     f"（可用：{'、'.join(sorted(known))}）")
+                if not names:
+                    raise ValueError("至少要启用一个事件源")
+                self.cfg.sources.enabled = names
                 applied.append(f"sources.{key}={value}")
 
         vision = patch.get("vision")

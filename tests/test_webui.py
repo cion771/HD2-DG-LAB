@@ -470,6 +470,15 @@ class TestWebServer(unittest.TestCase):
         status, data = http("POST", self.base + "/api/config", {"sources": {"enabled": []}})
         self.assertEqual(status, 400)
 
+    def test_post_config_rejects_retired_source_fields(self) -> None:
+        """0.7.0 删掉了 sources.http_*；再 POST 这些字段必须报错，不能假装成功。"""
+        status, data = http("POST", self.base + "/api/config",
+                            {"sources": {"http_port": 47778}})
+        self.assertEqual(status, 400, data)
+        self.assertIn("http_port", data["error"])
+        self.assertFalse([line for line in data.get("applied", [])
+                          if line.startswith("sources.")])
+
     def test_post_config_applies_ramp_settings(self) -> None:
         status, data = http("POST", self.base + "/api/config",
                             {"ramp": {"enabled": True, "per_event": 3, "ceiling_pct": 18,
