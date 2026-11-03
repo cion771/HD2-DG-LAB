@@ -5,6 +5,25 @@
 
 ---
 
+## 0.7.0
+
+**不兼容变更：移除 HTTP 事件源。**
+
+- 删除 Python 的 `hd2coyote/sources/http.py` 与 Rust crate `hd2-source-http`。那个源会监听
+  `127.0.0.1:47778`，接受任意程序 POST JSON 来触发规则；端口、`X-HD2Coyote-Token` 令牌、
+  每秒限速、状态包断流超时一并移除。
+- 配置不再有 `sources.http_host` / `http_port` / `http_token` / `http_max_per_s` /
+  `http_timeout_s`。旧配置里留着这些键会被忽略，不会报错。
+- `sources.enabled` 里如果还写着 `"http"`，保存设置时会提示「未知事件源」，删掉即可。
+- **手动注入保留**：网页「注入一个事件」用的 JSON 解析与状态机搬到
+  `hd2coyote/sources/manual.py`（`ManualEventParser`），仍与游戏桥共用同一套
+  `EventTrackers` 与阈值，判定路径没有分叉。
+- `/api/sources` 不再返回 `http` 段（上报地址、令牌状态、示例）；Rust 端的 catalog 同步
+  去掉 `http` 条目。
+- 文档：`docs/SOURCES.md` 重写（内置源改为 `game_bridge` / `vision` / `udp`，并加了一节
+  说明这次移除与迁移办法）；`README`、`docs/WEBUI.md`、`docs/RUST.md`、`config.example.json`
+  同步。
+
 ## 0.6.6
 
 - 桌面界面整体重做。Python EXE 与 Rust 客户端共用同一套前端，所以两边同时生效：

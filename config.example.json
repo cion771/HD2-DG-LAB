@@ -15,12 +15,7 @@
   "sources": {
     "enabled": [
       "game_bridge"
-    ],
-    "http_host": "127.0.0.1",
-    "http_port": 47778,
-    "http_token": "",
-    "http_max_per_s": 20,
-    "http_timeout_s": 3
+    ]
   },
   "vision": {
     "monitor": 1,

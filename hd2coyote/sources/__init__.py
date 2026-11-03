@@ -20,7 +20,6 @@ from .base import (
     source_catalog,
 )
 from .game_bridge import GameBridgeSource
-from .http import HttpEventSource
 from .vision import VisionSource
 
 __all__ = [
@@ -33,6 +32,5 @@ __all__ = [
     "register_source",
     "source_catalog",
     "GameBridgeSource",
-    "HttpEventSource",
     "VisionSource",
 ]

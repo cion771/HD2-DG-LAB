@@ -96,10 +96,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     print("  安装：见 docs/HOOK.md —— 需要 Bingus Shared Loader v15+ 与 lua/hd2_coyote_bridge.lua")
     print("  自检：python -m hd2coyote doctor")
     print(f"事件源  ：{'、'.join(cfg.sources.enabled)}")
-    if "http" in cfg.sources.enabled:
-        token = "（需要 X-HD2Coyote-Token）" if cfg.sources.http_token else ""
-        print(f"  HTTP 上报：POST http://{cfg.sources.http_host}:{cfg.sources.http_port}/event{token}")
-        print("  例子：见 docs/SOURCES.md，或 Fluent 桌面版的「事件源」面板")
     print("检测中…… Ctrl+C 退出")
     try:
         while True:
@@ -148,9 +144,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     names = [item["name"] for item in source_catalog()]
     print(f"事件源      : {'、'.join(cfg.sources.enabled) or '（未启用任何源）'}"
           f"（可用：{'、'.join(names)}）")
-    if "http" in cfg.sources.enabled:
-        print(f"HTTP 事件源 : http://{cfg.sources.http_host}:{cfg.sources.http_port}/event"
-              f"{'（需要令牌）' if cfg.sources.http_token else '（无令牌）'}")
     print(f"设备        : {cfg.device.kind} {cfg.device.host}:{cfg.device.port}")
     _, _, lan_ip = _device_api()
     print(f"本机局域网IP: {lan_ip()}")
@@ -178,7 +171,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print("加载器      : 未找到 BingusSharedLoader.log（没装社区加载器 → hook 路线不可用）")
 
     print(f"安全上限    : max_pct={cfg.safety.max_pct}% max_absolute={cfg.safety.max_absolute}")
-    print("说明        : 本程序接收游戏桥/HTTP 上报；游戏桥限制与风险见 docs/HOOK.md")
+    print("说明        : 本程序接收游戏内 Lua 桥与视觉源；限制与风险见 docs/HOOK.md")
     return 0
 
 

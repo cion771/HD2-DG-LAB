@@ -49,7 +49,7 @@ class MainWindow:
         row = ttk.Frame(frame)
         row.pack(fill="x", padx=6, pady=4)
 
-        ttk.Label(row, text="状态来源：游戏桥 / HTTP 事件源").pack(side="left")
+        ttk.Label(row, text="状态来源：游戏内 Lua 桥").pack(side="left")
         row2 = ttk.Frame(frame)
         row2.pack(fill="x", padx=6, pady=4)
         ttk.Label(row2, text="模式").pack(side="left")

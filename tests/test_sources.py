@@ -1,7 +1,7 @@
-"""事件源：注册表 + 游戏桥包装 + HTTP 源（解析 / 状态机 / 限速 / 令牌）。
+"""事件源：注册表 + 游戏桥包装 + 手动注入的 JSON 解析与状态机。
 
-HTTP 源把一个端口当入口，任何外部程序都能上报，所以这一层必须自己扛住
-「不认识的东西」「太多太快」「令牌不对」——这些都在这里钉死。
+手动注入和网页那一层共用同一套解析与阈值，所以「注入一个事件」和真实数据
+走的是同一条判定路径。
 """
 
 from __future__ import annotations
@@ -12,9 +12,9 @@ import unittest
 
 from hd2coyote.config import AppConfig
 from hd2coyote.events import Damage, Death, LimbInjury, LowHealth, Revive
-from hd2coyote.sources import (GameBridgeSource, HttpEventSource, available_sources,
-                               build_sources, create_source, source_catalog)
-from hd2coyote.sources.http import MAX_QUEUE, parse_event, _hp_ratio
+from hd2coyote.sources import (GameBridgeSource, available_sources, build_sources,
+                               create_source, source_catalog)
+from hd2coyote.sources.manual import ManualEventParser, hp_ratio, parse_event
 
 LOG = logging.getLogger("hd2coyote.tests.sources")
 
@@ -23,23 +23,23 @@ class TestRegistry(unittest.TestCase):
     def test_catalog_lists_builtin_sources(self) -> None:
         names = available_sources()
         self.assertIn("game_bridge", names)
-        self.assertIn("http", names)
+        self.assertIn("vision", names)
+        self.assertNotIn("http", names)                        # 0.7.0 移除了 HTTP 事件源
         rows = {row["name"]: row for row in source_catalog()}
         self.assertTrue(rows["game_bridge"]["critical"])       # 游戏桥断了 = 状态不可信
-        self.assertFalse(rows["http"]["critical"])             # 没人上报时不算断流
         self.assertTrue(rows["game_bridge"]["label"])
-        self.assertNotIn("<", rows["http"]["hint"])            # 尖括号会被页面当 HTML 吃掉
+        self.assertNotIn("<", rows["game_bridge"]["hint"])     # 尖括号会被页面当 HTML 吃掉
 
     def test_build_sources_keeps_configured_order_and_dedupes(self) -> None:
         cfg = AppConfig()
-        cfg.sources.enabled = ["http", "game_bridge", "http"]
+        cfg.sources.enabled = ["vision", "game_bridge", "vision"]
         sources = build_sources(cfg, LOG)
-        self.assertEqual([src.name for src in sources], ["http", "game_bridge"])
+        self.assertEqual([src.name for src in sources], ["vision", "game_bridge"])
 
     def test_build_sources_ignores_unknown_names(self) -> None:
         cfg = AppConfig()
-        cfg.sources.enabled = ["http", "脑电波"]
-        self.assertEqual([src.name for src in build_sources(cfg, LOG)], ["http"])
+        cfg.sources.enabled = ["game_bridge", "脑电波"]
+        self.assertEqual([src.name for src in build_sources(cfg, LOG)], ["game_bridge"])
 
     def test_create_source_unknown_raises(self) -> None:
         with self.assertRaises(KeyError):
@@ -54,7 +54,7 @@ class TestRegistry(unittest.TestCase):
         self.assertIn("game_bridge", src.status().as_dict()["name"])
 
     def test_source_status_is_jsonable(self) -> None:
-        raw = create_source("http", AppConfig(), LOG).status().as_dict()
+        raw = create_source("vision", AppConfig(), LOG).status().as_dict()
         for key in ("name", "label", "kind", "started", "alive", "critical",
                     "detail", "events", "error"):
             self.assertIn(key, raw)
@@ -95,123 +95,24 @@ class TestParseEvent(unittest.TestCase):
 
 class TestHpRatio(unittest.TestCase):
     def test_forms(self) -> None:
-        self.assertAlmostEqual(_hp_ratio({"hp": 0.4}), 0.4)           # 比例
-        self.assertAlmostEqual(_hp_ratio({"hp": 40}), 0.4)            # 百分制
-        self.assertAlmostEqual(_hp_ratio({"hp": 40, "hp_max": 100}), 0.4)
-        self.assertAlmostEqual(_hp_ratio({"hp": 40, "hp_max": 80}), 0.5)
-        self.assertAlmostEqual(_hp_ratio({"hp": 200}), 1.0)           # 夹住
-        self.assertIsNone(_hp_ratio({}))
-        self.assertIsNone(_hp_ratio({"hp": "坏"}))
+        self.assertAlmostEqual(hp_ratio({"hp": 0.4}), 0.4)           # 比例
+        self.assertAlmostEqual(hp_ratio({"hp": 40}), 0.4)            # 百分制
+        self.assertAlmostEqual(hp_ratio({"hp": 40, "hp_max": 100}), 0.4)
+        self.assertAlmostEqual(hp_ratio({"hp": 40, "hp_max": 80}), 0.5)
+        self.assertAlmostEqual(hp_ratio({"hp": 200}), 1.0)           # 夹住
+        self.assertIsNone(hp_ratio({}))
+        self.assertIsNone(hp_ratio({"hp": "坏"}))
 
 
-class TestHttpSource(unittest.TestCase):
-    def setUp(self) -> None:
-        self.cfg = AppConfig()
-        self.src = HttpEventSource(self.cfg, LOG)
 
-    def test_ingest_unknown_event_counts_bad(self) -> None:
-        self.assertEqual(self.src.ingest({"ev": "喝茶"}), [])
-        self.assertEqual(self.src.packets, 1)
-        self.assertEqual(self.src.bad, 1)
+class TestManualStateMachine(unittest.TestCase):
+    """手动注入的状态包走的是和游戏内桥同一套 EventTrackers，判定逻辑只有一份。"""
 
-    def test_ingest_non_dict(self) -> None:
-        self.assertEqual(self.src.ingest("不是字典"), [])          # type: ignore[arg-type]
-        self.assertEqual(self.src.bad, 1)
-
-    def test_ingest_known_event(self) -> None:
-        events = self.src.ingest({"ev": "limb", "slot": 0, "bleeding": True})
-        self.assertEqual(len(events), 1)
-        self.assertEqual(events[0].kind, "limb_injury")
-        self.assertEqual(self.src.bad, 0)
-
-    def test_push_poll_and_events_counter(self) -> None:
-        self.src.push([Damage(severity=5.0), Damage(severity=6.0)])
-        self.assertEqual(self.src.events, 2)
-        self.assertEqual(len(self.src.poll(0.0)), 2)
-        self.assertEqual(self.src.poll(0.0), [])
-        self.src.push([])                                       # 空列表什么也不做
-        self.assertEqual(self.src.events, 2)
-
-    def test_queue_cap_drops_oldest(self) -> None:
-        self.src.push([Damage(severity=1.0) for _ in range(MAX_QUEUE + 5)])
-        self.assertEqual(self.src.dropped, 5)
-        self.assertEqual(len(self.src.poll(0.0)), MAX_QUEUE)
-
-    def test_token(self) -> None:
-        self.assertTrue(self.src.token_ok(None))                # 没设令牌就都放行
-        self.cfg.sources.http_token = "s3cret"
-        self.assertFalse(self.src.token_ok("bad"))
-        self.assertFalse(self.src.token_ok(None))
-        self.assertTrue(self.src.token_ok("s3cret"))
-        self.assertTrue(self.src.token_ok(None, "s3cret"))      # ?token= 写法
-
-    def test_rate_limit_sliding_window(self) -> None:
-        self.cfg.sources.http_max_per_s = 3
-        self.assertTrue(self.src.rate_ok(now=100.0))
-        self.assertTrue(self.src.rate_ok(now=100.1))
-        self.assertTrue(self.src.rate_ok(now=100.2))
-        self.assertFalse(self.src.rate_ok(now=100.3))
-        self.assertEqual(self.src.dropped, 1)
-        self.assertTrue(self.src.rate_ok(now=101.5))            # 窗口滑过去了
-
-    def test_stats_shape(self) -> None:
-        stats = self.src.stats()
-        for key in ("packets", "events", "bad", "dropped", "queued", "state_seen",
-                    "state_age_s", "listening", "token_required", "max_per_s"):
-            self.assertIn(key, stats)
-        self.assertEqual(stats["listening"],
-                         f"{self.cfg.sources.http_host}:{self.cfg.sources.http_port}")
-
-    def test_describe_before_start(self) -> None:
-        self.assertEqual(self.src.describe(), "未启动")
-
-    def test_apply_config_rebuilds_trackers(self) -> None:
-        old = self.src.trackers
-        cfg = AppConfig()
-        self.src.apply_config(cfg)
-        self.assertIs(self.src.cfg, cfg)
-        self.assertIsNot(self.src.trackers, old)
-
-
-class TestHttpStateMachine(unittest.TestCase):
-    """状态包走的是和游戏内桥同一套 EventTrackers，所以判定逻辑只有一份。"""
-
-    def make(self, **detect) -> tuple[AppConfig, HttpEventSource]:
+    def make(self, **detect) -> tuple[AppConfig, ManualEventParser]:
         cfg = AppConfig()
         for key, value in detect.items():
             setattr(cfg.detect, key, value)
-        src = HttpEventSource(cfg, LOG)
-        src.started = True          # 这里只测状态判定，不真的占端口
-        return cfg, src
-
-    def test_state_packet_marks_seen_and_critical(self) -> None:
-        _, src = self.make()
-        self.assertFalse(src.critical_now())
-        src.ingest({"ev": "state", "hp": 100, "hp_max": 100}, now=time.monotonic())
-        self.assertTrue(src.state_seen)
-        self.assertTrue(src.critical_now())                     # 配了超时才算状态源
-        self.assertTrue(src.alive)
-        self.assertEqual(src.last_state["hp"], 100)
-
-    def test_state_times_out(self) -> None:
-        cfg, src = self.make()
-        now = time.monotonic()
-        src.ingest({"hp": 100, "hp_max": 100}, now=now)
-        self.assertTrue(src.alive)
-        src.last_state_at = now - (cfg.sources.http_timeout_s + 1.0)
-        self.assertFalse(src.alive)
-
-    def test_no_timeout_configured_never_goes_stale(self) -> None:
-        cfg, src = self.make()
-        cfg.sources.http_timeout_s = 0.0
-        src.ingest({"hp": 100, "hp_max": 100}, now=time.monotonic())
-        self.assertFalse(src.critical_now())
-        self.assertTrue(src.alive)
-
-    def test_catalog_reports_static_criticality(self) -> None:
-        rows = {row["name"]: row for row in source_catalog()}
-        self.assertFalse(rows["http"]["critical"])              # 静态：事件型
-        self.assertTrue(rows["game_bridge"]["critical"])
+        return cfg, ManualEventParser(cfg, LOG)
 
     def test_damage_from_hp_drop(self) -> None:
         _, src = self.make(damage_merge_window_ms=0.0)

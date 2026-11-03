@@ -622,7 +622,6 @@ fn source_state(name: &str, vision: Option<&VisionSnapshot>) -> (bool, Value) {
 fn source_label(name: &str) -> &str {
     match name {
         "game_bridge" => "游戏内桥",
-        "http" => "HTTP 上报",
         "udp" => "UDP 上报",
         "vision" => "外部 HUD 视觉（EAC 兼容）",
         _ => "事件源",
@@ -644,14 +643,13 @@ async fn sources(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
         "ok":true,
         "engine_source":rt.cfg.source,
-        "catalog":[{"name":"game_bridge","label":"游戏内桥","hint":"接收本机 Lua 桥遥测"},{"name":"http","label":"HTTP 上报","hint":"由外部工具上报事件"},{"name":"udp","label":"UDP 上报","hint":"兼容 UDP 游戏桥"},{"name":"vision","label":"外部 HUD 视觉（EAC 兼容）","hint":hd2_source_vision::HINT}],
+        "catalog":[{"name":"game_bridge","label":"游戏内桥","hint":"接收本机 Lua 桥遥测"},{"name":"udp","label":"UDP 上报","hint":"兼容 UDP 游戏桥"},{"name":"vision","label":"外部 HUD 视觉（EAC 兼容）","hint":hd2_source_vision::HINT}],
         // Rust 端只实现了 vision；其余源保留名字是为了与 Python 桌面版共用配置。
         "implemented":[hd2_source_vision::NAME],
         "enabled":rt.cfg.sources.enabled,
         "running":rt.running,
         "runtime":runtime,
-        "vision":{"configured":rt.cfg.vision.hp_bar,"auto_locate":rt.cfg.vision.auto_locate,"fps":rt.cfg.vision.fps,"brightness":rt.cfg.vision.brightness,"stale_timeout_s":rt.cfg.vision.stale_timeout_s,"active":vision.is_some(),"hp":vision.as_ref().and_then(|s|s.hp),"rect":vision.as_ref().and_then(|s|s.rect),"alive":vision.as_ref().is_some_and(|s|s.alive),"capture_errors":vision.as_ref().map(|s|s.capture_errors).unwrap_or(0),"note":vision.as_ref().map(|s|s.note.clone()).unwrap_or_default(),"detail":rt.vision.as_ref().map(|s|s.describe()).unwrap_or_else(||"视觉源未启动".into())},
-        "http":{"host":rt.cfg.sources.http_host,"port":rt.cfg.sources.http_port,"url":format!("http://{}:{}/event",rt.cfg.sources.http_host,rt.cfg.sources.http_port),"token_required":!rt.cfg.sources.http_token.is_empty(),"max_per_s":rt.cfg.sources.http_max_per_s,"examples":{"damage":{"ev":"damage","severity":20},"death":{"ev":"death"},"state":{"ev":"state","hp":80,"hp_max":100,"limbs":[0,0,0]}}}
+        "vision":{"configured":rt.cfg.vision.hp_bar,"auto_locate":rt.cfg.vision.auto_locate,"fps":rt.cfg.vision.fps,"brightness":rt.cfg.vision.brightness,"stale_timeout_s":rt.cfg.vision.stale_timeout_s,"active":vision.is_some(),"hp":vision.as_ref().and_then(|s|s.hp),"rect":vision.as_ref().and_then(|s|s.rect),"alive":vision.as_ref().is_some_and(|s|s.alive),"capture_errors":vision.as_ref().map(|s|s.capture_errors).unwrap_or(0),"note":vision.as_ref().map(|s|s.note.clone()).unwrap_or_default(),"detail":rt.vision.as_ref().map(|s|s.describe()).unwrap_or_else(||"视觉源未启动".into())}
     }))
 }
 

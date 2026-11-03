@@ -54,12 +54,6 @@ class SourcesConfig:
     """
 
     enabled: list[str] = field(default_factory=lambda: ["game_bridge"])
-    #: HTTP 事件源：任何外部程序 POST 一行 JSON 就能触发（详见 docs/SOURCES.md）
-    http_host: str = "127.0.0.1"
-    http_port: int = 47778
-    http_token: str = ""  # 非空时要求 X-HD2Coyote-Token 头（或 ?token=）
-    http_max_per_s: float = 20.0  # 限速：超过就丢弃并告警，避免外部脚本刷爆电极
-    http_timeout_s: float = 3.0  # 收到过 state 后超过这么久没数据 = 断流（0 = 不判）
 
 
 @dataclass

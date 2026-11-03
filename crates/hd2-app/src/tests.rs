@@ -254,7 +254,7 @@ async fn waves_and_sources_match_frontend_shape() {
     assert!(sources["catalog"].is_array());
     assert!(sources["enabled"].is_array());
     assert!(sources["runtime"].is_array());
-    assert!(sources["http"].is_object());
+    assert!(sources.get("http").is_none());   // 0.7.0 移除了 HTTP 事件源
     let waves = json(
         app.oneshot(request("GET", "/api/waves", None))
             .await
@@ -388,7 +388,7 @@ async fn vision_surfaces_idle_source_and_rejects_bad_delay() {
 
 #[tokio::test]
 async fn unimplemented_sources_report_null_alive() {
-    // Rust 客户端只接了 vision。game_bridge / http / udp 的名字可以留在配置里，
+    // Rust 客户端只接了 vision。game_bridge / udp 的名字可以留在配置里，
     // 但它们在本进程没有采集端——绝不能用 running 冒充存活。
     let (_dir, state) = fixture().await;
     let app = router(state);

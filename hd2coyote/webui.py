@@ -42,7 +42,7 @@ from .config import AppConfig, Box
 from .engine import Engine, _fmt_event
 from .events import truthy
 from .sources import source_catalog
-from .sources.http import HttpEventSource, looks_known
+from .sources.manual import ManualEventParser, looks_known
 
 LOGGER = logging.getLogger("hd2coyote.webui")
 
@@ -333,7 +333,7 @@ class WebApp:
         # 检查更新的缓存（页面只读它，避免每次刷新都去戳 GitHub）
         self.update_result: dict[str, Any] | None = None
         # 手动注入用：HTTP 源没启用时，自己留一个只做解析的实例（不监听端口）
-        self._manual_source: HttpEventSource | None = None
+        self._manual_source: ManualEventParser | None = None
         # 「关闭程序」：置位后由 Fluent 桌面宿主和内嵌服务器退出。
         self.shutdown_event = threading.Event()
         self.shutdown_reason = ""
@@ -580,14 +580,6 @@ class WebApp:
                     if not names:
                         raise ValueError("至少要启用一个事件源")
                     self.cfg.sources.enabled = names
-                elif key == "http_port":
-                    value = int(value)
-                    if not 1024 <= value <= 65535:
-                        raise ValueError("sources.http_port 必须在 1024..65535")
-                    self.cfg.sources.http_port = value
-                elif key == "http_max_per_s":
-                    value = max(1.0, min(200.0, float(value)))
-                    self.cfg.sources.http_max_per_s = value
                 else:
                     setattr(self.cfg.sources, key, value)
                 applied.append(f"sources.{key}={value}")
@@ -804,14 +796,6 @@ class WebApp:
             "enabled": list(self.cfg.sources.enabled),
             "catalog": source_catalog(),
             "runtime": list(self.engine.status.sources),
-            "http": {
-                "host": self.cfg.sources.http_host,
-                "port": int(self.cfg.sources.http_port),
-                "url": f"http://{self.cfg.sources.http_host}:{int(self.cfg.sources.http_port)}/event",
-                "token_required": bool(self.cfg.sources.http_token),
-                "max_per_s": float(self.cfg.sources.http_max_per_s),
-                "examples": HTTP_USAGE_EXAMPLE,
-            },
         }
 
     @mutating
@@ -840,12 +824,9 @@ class WebApp:
         return {"ok": True, "detail": detail, "events": [ev.kind for ev in events]}
 
     def _ingest_manual(self, item: dict[str, Any]) -> list[Any]:
-        """借 HTTP 源的状态机解析（它没启用时，自己留一个只解析、不监听端口的实例）。"""
-        source = self.engine.source("http")
-        if source is not None:
-            return list(source.ingest(item))
+        """用与状态机同一套映射解析；只解析，不监听任何端口。"""
         if self._manual_source is None:
-            self._manual_source = HttpEventSource(self.cfg, LOGGER)
+            self._manual_source = ManualEventParser(self.cfg, LOGGER)
         return list(self._manual_source.ingest(item))
 
     def waves_dict(self) -> dict[str, Any]:
@@ -961,16 +942,6 @@ class WebApp:
         else:
             self._note("检查更新失败：" + str(result.get("error")))
         return dict(result)
-
-
-HTTP_USAGE_EXAMPLE: dict[str, Any] = {
-    "state": {"ev": "state", "hp": 62, "hp_max": 100, "limbs": [0, 1, 0], "bleeding": 0, "dead": 0},
-    "damage": {"ev": "damage", "severity": 12.5},
-    "limb_injury": {"ev": "limb_injury", "slot": 1, "bleeding": True, "name": "左腿"},
-    "death": {"ev": "death"},
-    "revive": {"ev": "revive"},
-    "low_health": {"ev": "low_health", "ratio": 0.18},
-}
 
 
 def build_server(cfg: AppConfig, config_path: Path, host: str, port: int,

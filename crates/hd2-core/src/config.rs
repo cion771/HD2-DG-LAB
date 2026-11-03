@@ -20,7 +20,7 @@ cfg!(HookConfig {
     port: u16 = 47777,
     timeout_s: f64 = 2.0
 });
-cfg!(SourcesConfig { enabled:Vec<String>=vec!["game_bridge".into()], http_host:String="127.0.0.1".into(), http_port:u16=47778, http_token:String=String::new(), http_max_per_s:f64=20.0, http_timeout_s:f64=3.0 });
+cfg!(SourcesConfig { enabled:Vec<String>=vec!["game_bridge".into()] });
 cfg!(HudConfig { injury_slots:usize=3, injury_slot_names:Vec<String>=vec!["左肢".into(),"躯干".into(),"右肢".into()] });
 // 屏幕矩形；视觉源使用相对于游戏窗口客户区左上角的像素坐标。
 cfg!(ScreenRect {
@@ -271,8 +271,6 @@ mod tests {
         let v = serde_json::to_value(&c).unwrap();
         assert_eq!(v["device"]["host"], "0.0.0.0");
         assert_eq!(v["hook"]["host"], "127.0.0.1");
-        assert_eq!(v["sources"]["http_host"], "127.0.0.1");
-        assert_eq!(v["sources"]["http_max_per_s"], 20.0);
         assert_eq!(
             v["hud"]["injury_slot_names"],
             serde_json::json!(["左肢", "躯干", "右肢"])
@@ -283,12 +281,12 @@ mod tests {
     #[test]
     fn legacy_alias_and_source() {
         let c = AppConfig::from_json_str(
-            r#"{"source":"vision","detect":{"death_template_threshold":0.9},"sources":{"enabled":["http"]}}"#,
+            r#"{"source":"vision","detect":{"death_template_threshold":0.9},"sources":{"enabled":["udp"]}}"#,
         )
         .unwrap();
         assert_eq!(c.source, "hook");
         assert_eq!(c.detect.death_state_threshold, 0.9);
-        assert_eq!(c.sources.enabled, vec!["http"]);
+        assert_eq!(c.sources.enabled, vec!["udp"]);
     }
 
     #[test]
@@ -308,7 +306,7 @@ mod tests {
         assert_eq!(c.waves.entries["kept"].units, vec!["1", "True", "None"]);
         assert_eq!(c.waves.entries["kept"].freq, Some(12.5));
 
-        let fallback = AppConfig::from_json_str(r#"{"sources":{"enabled":"http"}}"#).unwrap();
+        let fallback = AppConfig::from_json_str(r#"{"sources":{"enabled":"vision"}}"#).unwrap();
         assert_eq!(fallback.sources.enabled, vec!["game_bridge"]);
     }
 }

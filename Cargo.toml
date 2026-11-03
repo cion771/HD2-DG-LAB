@@ -3,7 +3,6 @@ resolver = "2"
 members = [
   "crates/hd2-core",
   "crates/hd2-source-udp",
-  "crates/hd2-source-http",
   "crates/hd2-source-vision",
   "crates/hd2-dglab",
   "crates/hd2-controller",
@@ -11,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.6"
+version = "0.7.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.85"

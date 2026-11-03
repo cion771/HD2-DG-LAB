@@ -8,7 +8,6 @@
 | --- | --- |
 | `hd2-core` | 配置、事件、检测器、规则、惩罚累积、波形、安全限幅 |
 | `hd2-source-udp` | Lua 桥 UDP v1、有限队列、传输/状态新鲜度 |
-| `hd2-source-http` | HTTP 事件/状态源、令牌、限速和请求上限 |
 | `hd2-source-vision` | 外部 HUD 视觉源：只读窗口客户区像素、定位血条、输出血量比例 |
 | `hd2-dglab` | DG-LAB v2 WebSocket、绑定、反馈、心跳、分帧和二维码 URL |
 | `hd2-controller` | 事件编排、效果仲裁、升降速、生命周期和故障归零 |

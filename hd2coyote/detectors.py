@@ -1,4 +1,4 @@
-"""桥接/HTTP 状态转事件：阈值、边沿、防抖与复活保护，不读取图像。"""
+"""桥接状态转事件：阈值、边沿、防抖与复活保护，不读取图像。"""
 
 from __future__ import annotations
 
@@ -137,7 +137,7 @@ class DeathTracker:
 class EventTrackers:
     """把「血量 + 损伤 + 阵亡」读数变成事件。
 
-    游戏桥（HookSource）和 HTTP 状态源共用这一份逻辑。
+    游戏桥（HookSource）与视觉源的状态包共用这一份逻辑。
     """
 
     def __init__(self, cfg: AppConfig) -> None:

@@ -63,10 +63,10 @@ class TestConfig(unittest.TestCase):
             "source": "vision", "capture": {"backend": "mss"},
             "hud": {"hp_bar": {"x": 1, "y": 2, "w": 3, "h": 4}, "death_template": "private.png"},
             "detect": {"death_template_threshold": 0.9, "capture_error_limit": 30},
-            "sources": {"enabled": ["http"]}, "device": {"kind": "mock"},
+            "sources": {"enabled": ["vision"]}, "device": {"kind": "mock"},
         })
         self.assertEqual(cfg.source, "hook")
-        self.assertEqual(cfg.sources.enabled, ["http"])
+        self.assertEqual(cfg.sources.enabled, ["vision"])
         self.assertEqual(cfg.detect.death_state_threshold, 0.9)
         self.assertNotIn("capture", cfg.to_dict())
         self.assertEqual(cfg.vision.backend, "mss")

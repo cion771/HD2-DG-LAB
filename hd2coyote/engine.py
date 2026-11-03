@@ -184,7 +184,7 @@ class Engine:
 
     # ------------------------------------------------------------- 事件源
     def _run_sources(self) -> None:
-        """外部事件源循环（游戏内 Lua 桥 / HTTP 事件源 / 之后可以再加别的）。"""
+        """外部事件源循环（游戏内 Lua 桥 / 视觉源 / 之后可以再加别的）。"""
         try:
             self.sources = build_sources(self.cfg, self.log)
         except Exception as exc:
@@ -272,7 +272,7 @@ class Engine:
         self.hook = getattr(bridge, "hook", None) if bridge is not None else None
 
     def source(self, name: str) -> Source | None:
-        """按名字取当前运行的事件源（例如 "http"、"game_bridge"）；没有则 None。"""
+        """按名字取当前运行的事件源（例如 "vision"、"game_bridge"）；没有则 None。"""
         return self._source_map.get(str(name))
 
     def _source_hint(self) -> str:
@@ -444,7 +444,7 @@ def _fmt_event(event: Event) -> str:
     if isinstance(event, Damage):
         return f"受伤 -{event.severity:.1f}%（{event.hp_before * 100:.0f}%→{event.hp_after * 100:.0f}%）"
     if isinstance(event, LimbInjury):
-        # 名字为空（例如 HTTP 上报只给了 slot）时别显示成「肢体损伤 []」
+        # 名字为空（只给了部位序号）时别显示成「肢体损伤 []」
         text = f"肢体损伤 {event.name}".rstrip()
         return text + ("（流血）" if event.bleeding else "")
     if isinstance(event, Death):

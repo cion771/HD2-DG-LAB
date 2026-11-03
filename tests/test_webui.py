@@ -386,9 +386,9 @@ class TestWebServer(unittest.TestCase):
         self.assertIn("game_bridge", data["enabled"])
         names = [row["name"] for row in data["catalog"]]
         self.assertIn("game_bridge", names)
-        self.assertIn("http", names)
-        self.assertIn("/event", data["http"]["url"])
-        self.assertIn("damage", data["http"]["examples"])
+        self.assertIn("vision", names)
+        self.assertNotIn("http", names)        # 0.7.0 移除了 HTTP 事件源
+        self.assertNotIn("http", data)         # /api/sources 不再有 http 段
 
     def test_get_waves_endpoint(self) -> None:
         status, data = http("GET", self.base + "/api/waves")

@@ -38,35 +38,50 @@ def wait_for(predicate, timeout: float = 3.0, interval: float = 0.02) -> bool:
     return bool(predicate())
 
 
-class TestHttpOnlyEngine(unittest.TestCase):
-    """不装游戏桥，只靠 HTTP 上报也能玩（别的游戏/直播工具/手机都能当事件源）。"""
+class PassiveSource(Source):
+    """一直在线、从不产生事件的源：把「源本身送不送来东西」这个变量固定住。"""
+
+    name = "passive"
+    label = "Passive"
+    critical = False
+
+    @property
+    def alive(self) -> bool:
+        return True
+
+    def poll(self, now: float):
+        return []
+
+
+class TestInjectedEventEngine(unittest.TestCase):
+    """网页「手动注入」那条路径：不经过任何网络源，事件也要走到设备。"""
 
     def setUp(self) -> None:
         cfg = AppConfig()
         cfg.device.kind = "mock"
-        cfg.sources.enabled = ["http"]
-        cfg.sources.http_host = "127.0.0.1"
-        cfg.sources.http_port = 0                     # 让系统随便给个端口
+        cfg.sources.enabled = ["game_bridge"]
         cfg.rules["damage"].base_pct = 20.0
         self.cfg = cfg
+        self.source = PassiveSource(cfg)
         self.engine = Engine(cfg, LOG)
+        self.patch = mock.patch("hd2coyote.engine.build_sources",
+                                return_value=[self.source])
+        self.patch.start()
 
     def tearDown(self) -> None:
+        self.patch.stop()
         self.engine.stop()
 
-    def test_http_event_reaches_the_device(self) -> None:
+    def test_injected_event_reaches_the_device(self) -> None:
         self.engine.start()
-        self.assertTrue(wait_for(lambda: self.engine.source("http") is not None))
-        src = self.engine.source("http")
-        assert src is not None
-        self.assertIsNone(self.engine.hook)           # 没启用游戏桥
+        self.assertTrue(wait_for(lambda: bool(self.engine.status.sources)))
         self.engine.arm()
-        src.push([Damage(severity=20.0, hp_before=1.0, hp_after=0.8)])
+        self.engine.inject(Damage(severity=20.0, hp_before=1.0, hp_after=0.8))
         self.assertTrue(wait_for(lambda: self.engine.device.peak_strength > 0),
-                        "HTTP 事件没有传到设备")
+                        "注入的事件没有传到设备")
         self.assertTrue(self.engine.status.detecting)
         names = [row["name"] for row in self.engine.status.sources]
-        self.assertIn("http", names)
+        self.assertIn("passive", names)
 
     def test_status_lists_every_source(self) -> None:
         self.engine.start()

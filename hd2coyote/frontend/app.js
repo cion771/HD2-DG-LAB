@@ -139,8 +139,7 @@ async function loadSources() {
   const s = sourceData = await api('/api/sources'); $('srcList').replaceChildren();
   $('visionCalibration').hidden = !s.catalog.some(item => item.name === 'vision');
   s.catalog.forEach(item => { const row = node('div','source-row'), label = node('label'), input = node('input'); input.type = 'checkbox'; input.id = 'src_' + item.name; input.checked = s.enabled.includes(item.name); label.append(input,node('b','',item.label),node('span','muted',item.name)); row.append(label,node('small','',item.hint)); $('srcList').append(row); });
-  text('srcInfo','HTTP 上报：' + s.http.url + (s.http.token_required ? '（需要令牌）' : '（无令牌）') + ' · 限速 ' + s.http.max_per_s + '/s。更换事件源会停止检测，需手动重启。');
-  text('srcUsage',Object.entries(s.http.examples).map(([k,v]) => k + '  ' + JSON.stringify(v)).join('\n'));
+  text('srcInfo','更换事件源会停止检测，需手动重启。');
 }
 async function loadWaves() {
   const w = waveData = await api('/api/waves'), selected = value('wPreset'); $('wPreset').replaceChildren();
