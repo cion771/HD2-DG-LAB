@@ -74,8 +74,12 @@ class VisionConfig:
 class HudConfig:
     """桥接肢体状态配置；沿用 hud 键兼容旧配置。"""
 
-    injury_slots: int = 3  # 上报的肢体槽位数
-    injury_slot_names: list[str] = field(default_factory=lambda: ["左肢", "躯干", "右肢"])
+    #: 上报的肢体槽位数。0.8.0 起默认 6：游戏桥按 HUD 顺序发六个 zone
+    #: （头、胸、左臂、右臂、左腿、右腿），旧默认 3 会把前三个当成"左肢/躯干/右肢"，
+    #: 手臂和腿的受伤事件因此永远不会触发。视觉源只有 3 个区域，用不到时按需调小。
+    injury_slots: int = 6
+    injury_slot_names: list[str] = field(default_factory=lambda: [
+        "头部", "胸部", "左臂", "右臂", "左腿", "右腿"])
 
 
 @dataclass

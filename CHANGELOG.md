@@ -5,6 +5,44 @@
 
 ---
 
+## 0.8.0
+
+**不兼容变更：游戏内桥的前置从 Bingus Shared Loader 换成 MDL3，并按模块整体重写。**
+
+- **前置**：0.8.0 起游戏内桥运行在 [MDL3](https://ayakamods.com/mods/mdl3-preview-%E9%BA%A6%E5%BD%93%E5%8A%A83-%E9%A2%84%E8%A7%88%E7%89%88%EF%BC%81.5710/)（麦当当3，Lua mod 加载器）上。
+  Bingus Shared Loader 在 2026-10-20 游戏更新（内置 Lua 换成 PUC Lua 5.1）后已失效，
+  旧 addon 只能保留一版做回滚。MDL3 是闭源第三方软件，需要自行安装，本项目不分发。
+- **代码**：`lua/hd2_coyote_bridge.lua`（1353 行单文件）拆成 `addon/` 下 16 个模块：
+  `core/{load,compat,mem,net,config,log,clock,json}`、`sources/{runtime,direct,mock}`、
+  `state/sampler`、`profiles/steam_25480438`、`bridge`，外加两个入口
+  `mod.lua`（MDL3 本地 mod，`ctx` 契约）与 `entry.lua`（HD2-Addon 契约）。
+- **读内存**：不再硬依赖 `ffi`。优先 MDL3 原生 `ctx.read` / `ctx.module`，其次 `ffi`，
+  都没有就换数据源（HD2Runtime 公开 API 或 mock），绝不在没有校验的情况下读地址。
+  有 `ffi` 时仍然每次读之前 `VirtualQuery` 验址（现有崩溃防线保留）。
+- **出口**：新增文件广播。宿主没有 `ffi`（拿不到 ws2_32）时，桥把**同一条 JSON 报文**写到
+  `%LOCALAPPDATA%\hd2coyote\bridge_state.json`；控制器新增事件源 `bridge_file` 轮询它，
+  解析与事件判定复用 UDP 那条路的同一份状态机。
+- **每帧**：本地 mod 形态用 MDL3 的 `on_update(ctx, dt)`，不再包装游戏全局 `update`；
+  addon 形态仍包装 `_G.update`（那条路上没有 `on_update`）。
+- **菜单**：删掉在 Mod Options Menu 里注册 10 个信息行的老做法。本地 mod 形态改用 MDL3
+  原生选项（模式/间隔/端口/mock/开关），addon 形态只读配置文件。
+- **配置**：文件名与位置不变（`bridge_config.lua` / `.txt`），新增 `transport`、
+  `state_path`、`heartbeat`、`max_error`、`mock` 五个键；`menu` 档并入 `net`。
+- **打包**：新增 `tools/build_addon_mdl3.py`（`--both` / `--local` / `--patch-number`）。
+  产物：`build/mdl3/HD2-Coyote-<版本>.zip`（Arsenal/HD2MM）与
+  `HD2-Coyote-<版本>-local.zip`（解压即放 `%LOCALAPPDATA%\MDL\Helldivers2\Mods\`）。
+  打包器会反解补丁归档逐字节校验，并核对 `VERSION` 与 `addon/mod.lua` 一致。
+- **肢体槽位**：`hud.injury_slots` 默认从 3 改成 6（头/胸/左臂/右臂/左腿/右腿）。
+  之前桥发 6 个 zone、控制器只吃前 3 个，手臂和腿的受伤事件永远不会触发。
+  旧 `config.json` 里显式写着 3 的保持原样，需要六个部位请改成 6。
+- **沙箱 `_G`**：addon 形态的每帧钩子同时用 `rawget`/`rawset` 与普通索引/赋值，
+  MDL3 把 `_G` 代理到沙箱表时两边都能命中；拿不到 `update` 会写进日志而不是静默失效。
+- **测试**：新增 `tests/test_lua_mdl3.py`（LuaJIT + 假 ffi/假内存/假 ctx，9 例）与
+  `tests/test_bridge_file_source.py`（6 例）。覆盖 safe 档零动作、两条入口装载、
+  direct 源读假 game.dll、文件广播落盘、限频、配置钳制、JSON 编码。
+- **旧实现**：`lua/hd2_coyote_bridge.lua` 顶部标注已废弃，只保留一版供回滚；
+  `tools/build_addon.py` 仍能打旧包，但新装用户请用 `addon/`。
+
 ## 0.7.1
 
 - 修掉 0.7.0 里 `/api/config` 的一条说谎路径：`sources` 段收到不认识的字段时，原先返回

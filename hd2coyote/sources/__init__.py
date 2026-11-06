@@ -19,6 +19,7 @@ from .base import (
     register_source,
     source_catalog,
 )
+from .bridge_file import BridgeFileSource
 from .game_bridge import GameBridgeSource
 from .vision import VisionSource
 
@@ -32,5 +33,6 @@ __all__ = [
     "register_source",
     "source_catalog",
     "GameBridgeSource",
+    "BridgeFileSource",
     "VisionSource",
 ]

@@ -1,5 +1,10 @@
 """把 lua/hd2_coyote_bridge.lua 打包成 mod 管理器能导入的 ZIP。
 
+★ 已废弃（0.8.0）：游戏内桥已改为 MDL3 原生实现，请用 tools/build_addon_mdl3.py。
+  这个脚本只用于给旧版 BSL addon 出一版回滚包 —— 2026-10-20 游戏更新后 BSL 已失效，
+  新装用户请不要用它。产物结构（data/ + patch_N + sidecar）与新版打包器一致，
+  但资源名仍是旧单文件 mods/hd2coyote/hd2_coyote_bridge。
+
 产物结构（以 HD2 Arsenal 为准，它按目录决定部署什么）：
 
     <DisplayName>-<version>.zip

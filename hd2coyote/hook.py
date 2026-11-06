@@ -140,6 +140,24 @@ class HookSource:
                 self._queue.append({"packet": packet, "received": received})
                 del self._queue[:-256]
 
+    # ------------------------------------------------------------- 注入
+    def feed(self, packet: dict, received: float | None = None) -> None:
+        """把已经解析好的报文塞进同一套判定（文件广播等非 UDP 出口用这个）。
+
+        走这里而不是让外部直接改 state：坏包过滤、心跳/状态的到达时间语义、
+        队列上限都只在一处实现。
+        """
+        with self._lock:
+            stamp = time.monotonic() if received is None else received
+            if packet['ev'] == 'bye':
+                self.state.received = self.state.transport_received = 0.0
+            else:
+                self.state.transport_received = stamp
+                if packet['ev'] == 'state':
+                    self.state.received = stamp
+            self._queue.append({"packet": packet, "received": stamp})
+            del self._queue[:-256]
+
     # ------------------------------------------------------------- 处理
     def poll(self, now: float | None = None) -> list[Event]:
         """把收到的数据包转成事件（引擎每帧调用）。"""

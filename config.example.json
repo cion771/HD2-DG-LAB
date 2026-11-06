@@ -28,11 +28,14 @@
     "error_limit": 30
   },
   "hud": {
-    "injury_slots": 3,
+    "injury_slots": 6,
     "injury_slot_names": [
-      "左肢",
-      "躯干",
-      "右肢"
+      "头部",
+      "胸部",
+      "左臂",
+      "右臂",
+      "左腿",
+      "右腿"
     ]
   },
   "detect": {

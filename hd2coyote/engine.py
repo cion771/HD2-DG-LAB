@@ -267,9 +267,18 @@ class Engine:
         self.hook = None
 
     def _bind_hook(self) -> None:
-        """把 game_bridge 源内部的 HookSource 暴露成 self.hook（历史调用点依赖它）。"""
-        bridge = self._source_map.get("game_bridge")
-        self.hook = getattr(bridge, "hook", None) if bridge is not None else None
+        """把状态流源内部的 HookSource 暴露成 self.hook（历史调用点依赖它）。
+
+        UDP（game_bridge）与文件广播（bridge_file）内部是同一个 HookSource，
+        面板/诊断读 self.hook 时不该关心数据是从 socket 还是文件来的。
+        """
+        for name in ("game_bridge", "bridge_file"):
+            bridge = self._source_map.get(name)
+            hook = getattr(bridge, "hook", None) if bridge is not None else None
+            if hook is not None:
+                self.hook = hook
+                return
+        self.hook = None
 
     def source(self, name: str) -> Source | None:
         """按名字取当前运行的事件源（例如 "vision"、"game_bridge"）；没有则 None。"""

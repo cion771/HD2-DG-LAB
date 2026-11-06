@@ -6,8 +6,10 @@
 
 | 组件 | 作者 | 许可 | 本项目如何使用 |
 |---|---|---|---|
-| [Bingus Shared Loader](https://github.com/CowboyBingus/Helldivers2ModLoader) | CowboyBingus | 见其仓库 | 社区加载器。本项目的 Lua 桥作为它的 addon 运行（`data/9ba626afa44a3aa3.patch_N` + `-- HD2-Addon:` 头）。 |
-| [Mod Options Menu](https://github.com/CowboyBingus/ModOptionsMenu) | CowboyBingus | 0BSD | 桥的 `menu` 档会向它注册选项。**可选**：Fluent 桌面版不依赖它。 |
+| [MDL3（麦当当3）预览版](https://ayakamods.com/mods/mdl3-preview-%E9%BA%A6%E5%BD%93%E5%8A%A83-%E9%A2%84%E8%A7%88%E7%89%88%EF%BC%81.5710/) | 社区作者（闭源） | 闭源，禁再分发 | **0.8.0 起 Lua 桥的前置加载器。** 它自带启动加载器并兼容 BSL addon 契约；本项目只通过它的 Lua mod 契约（`ctx` / `on_update`）与 `-- HD2-Addon:` 契约对接，**不打包、不反编译、不再分发**。 |
+| [MDL（Mod Dynamic Loader）](https://ayakamods.com/mods/mdl-mod-dynamic-loader-pro-%E6%A8%A1%E7%BB%84%E5%8A%A8%E6%80%81%E5%8A%A0%E8%BD%BD%E5%99%A8.4713/) | 社区作者 | 闭源 | MDL3 的前代；其公开文档是本项目了解 `ctx` 能力边界的参考。 |
+| [Bingus Shared Loader](https://github.com/CowboyBingus/Helldivers2ModLoader) | CowboyBingus | 见其仓库 | **已失效**（2026-10-20 游戏更新后）。旧版 `lua/hd2_coyote_bridge.lua` 仍按它的 `-- HD2-Addon:` 契约运行，仅保留一版做回滚。 |
+| [Mod Options Menu](https://github.com/CowboyBingus/ModOptionsMenu) | CowboyBingus | 0BSD | 仅旧版 addon 使用。0.8.0 的 MDL3 版本不再注册任何菜单项，改用 MDL3 原生选项。 |
 | [Mod Bindings Menu](https://github.com/CowboyBingus/ModBindingsMenu) | CowboyBingus | 见其仓库 | 仅参考其按键绑定挂载方式，未对接。 |
 
 ## 参考实现

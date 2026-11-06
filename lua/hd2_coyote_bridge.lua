@@ -1,4 +1,7 @@
 -- HD2-Addon: mods/hd2coyote/hd2_coyote_bridge
+-- 已废弃（仅保留一版回滚）：0.8.0 起游戏内桥改为 MDL3 原生实现，源码在 addon/。
+-- 本文件只走 Bingus Shared Loader（BSL）；2026-10-20 游戏更新后 BSL 已失效，
+-- 请改用 addon/ 下的 MDL3 版本（见 docs/HOOK.md）。
 --
 -- hd2-coyote 游戏内桥（只读）
 --   在游戏进程内读取本地玩家的血量 / 肢体损伤 / 阵亡状态，
@@ -24,7 +27,7 @@
 -- 构建不匹配就拒绝读取，不接受用户手填偏移，也不扫描整个地址空间。
 
 local ADDON = 'mods/hd2coyote/hd2_coyote_bridge'
-local VERSION = '0.7.1'   -- 必须与仓库根的 VERSION 文件一致（打包时会校验）
+local VERSION = '0.8.0'   -- 必须与仓库根的 VERSION 文件一致（打包时会校验）
 local PROTOCOL = 1
 
 --------------------------------------------------------------------- 配置

@@ -31,8 +31,8 @@
 ### 工作原理
 
 ```text
-《绝地潜兵 2》+ 社区加载器 + Lua 桥
-                  │ 本机 UDP 状态流（127.0.0.1:47777）
+《绝地潜兵 2》+ MDL3（Lua mod 加载器）+ Lua 桥
+                  │ 本机 UDP 状态流（127.0.0.1:47777）或 %LOCALAPPDATA%\hd2coyote\bridge_state.json
                   ▼
      Python/Rust 控制器 ← 桌面版可选的窗口 HUD 视觉源
                   │ 事件判定 → 规则/波形 → 安全限幅
@@ -52,8 +52,8 @@ Fluent 桌面版负责操作控制器；其内嵌本地界面**不是**手机扫
 - **从源码运行 Fluent 桌面版**：Windows + Python 3.10 或更高版本、Microsoft Edge WebView2 Runtime；安装 Python 时勾选加入 PATH。
 - 安装依赖时需要联网；使用 Git 克隆则还需要 Git，也可下载仓库 ZIP。
 - 真机反馈需要 **郊狼 Coyote 3.0、DG-LAB 手机 App**，以及手机与电脑互通的可信局域网。
-- Hook 路线需要《绝地潜兵 2》、Bingus Shared Loader v18+、[HD2Runtime](https://github.com/SkyeShade/HD2Runtime) 0.31+ 及兼容的 mod 管理器；旧固定 profile 仅用于历史构建降级。
-- [Mod Options Menu](https://github.com/CowboyBingus/ModOptionsMenu) 是可选的游戏内连接信息与日志菜单，不是 Fluent 桌面版的前置依赖。
+- Hook 路线需要《绝地潜兵 2》、**MDL3 3.0.0-dev.x**（Lua mod 加载器，替换已失效的 Bingus Shared Loader）及兼容的 mod 管理器；[HD2Runtime](https://github.com/SkyeShade/HD2Runtime) 0.31+ 是可选的公开 API 数据源，缺失时自动降级到只读偏移。
+- MDL3 是闭源的社区加载器，需要自行从发布页获取；本项目不分发、不内嵌它。旧版用的 Bingus Shared Loader 在 2026-10-20 游戏更新后已失效。
 
 > 没有游戏或设备也可以完成 mock 自测。0.6.3 起，新版游戏优先通过 HD2Runtime 的公开 API 读取玩家状态；旧 `1.8.46015.0` profile 仅作降级兼容。**安装成功、离线测试通过仍不等于真实游戏读数已经在你的机器上核对。**
 
@@ -111,28 +111,31 @@ python -m venv .venv
 
 | 路线 | 适用场景 | 必须注意 |
 | --- | --- | --- |
-| `game_bridge`（默认） | 通过游戏内 Lua 桥自动读取血量、六肢损伤与阵亡状态 | 依赖社区加载器和受支持的游戏构建；构建不匹配会拒绝读取，仍存在崩溃、卡死或反作弊风险 |
+| `game_bridge`（默认） | 游戏内 Lua 桥经 UDP 上报血量、六肢损伤与阵亡状态 | 需要 MDL3 + 受支持的游戏构建；构建不匹配会拒绝读取，仍存在崩溃、卡死或反作弊风险 |
+| `bridge_file` | 同一个桥改走文件广播（`%LOCALAPPDATA%\hd2coyote\bridge_state.json`） | MDL3 宿主没有 `ffi` 时用这条；报文与 UDP 完全一致，二选一启用即可 |
 
 也可启用 `http` 事件源接收外部结构化状态/事件，或与游戏桥合流。详见 [事件源文档](docs/SOURCES.md)。
 
 0.5.1 起移除截图识别与标定。旧 `source: "vision"` 配置读取时迁移为事件源模式，忽略截图区域和模板路径，保留设备、规则、安全设置及 `sources.enabled`；不会自动开始检测或武装。
 
-### 2. Hook 路线：安装并验证游戏内桥
+### 2. Hook 路线：安装并验证游戏内桥（MDL3）
 
 **先保持 Mock 且未武装**，不要用人体反馈判断游戏数据是否正确。
 
 ```powershell
 ./.venv/Scripts/python.exe -m hd2coyote doctor
-./.venv/Scripts/python.exe tools/build_addon.py
+./.venv/Scripts/python.exe tools/build_addon_mdl3.py --both
 ```
 
-1. 打包产物为 `build/HD2-Coyote-Bridge-<VERSION>.zip`，版本号来自 [VERSION](VERSION)。将 ZIP 用 Arsenal / HD2 Mod Manager 导入、启用、Deploy，然后重启游戏。
-2. **桥默认是 `safe`，不是 `recon` 或 `live`**：只写日志，不读取游戏内存、不发 UDP、不注册菜单。先确认 addon 加载成功。
-3. 按 [Hook 文档第 9 节](docs/HOOK.md#9-模式阶梯与两起真实事故必读) 逐级验证：`safe → net → menu → recon → live`。`net` 检查通信，`menu` 检查菜单，`recon` 一次性验证构建、本地 Avatar 与生命记录。
-4. 0.6.3 的 `live` 会优先使用 HD2Runtime 公开 API；确认 Bingus Shared Loader 与 HD2Runtime 均已安装。只有 Runtime 缺失时才降级到旧 profile，不要手填地址绕过。
-5. 使用 Mock、保持未武装，确认桌面端显示的血量、受伤、阵亡与复活均与游戏一致后，才进入下一步连接真机。
+1. 产物在 `build/mdl3/`：`HD2-Coyote-<VERSION>.zip`（Arsenal / HD2MM 导入）与 `HD2-Coyote-<VERSION>-local.zip`（解压后是 `hd2coyote/` 文件夹，放进 `%LOCALAPPDATA%\MDL\Helldivers2\Mods\`）。**两种形态只装一种。**
+2. 确认 MDL3 已安装并被启用（它是本桥唯一的前置加载器；Bingus Shared Loader 已失效，装了也要先禁用）。
+3. **桥默认是 `safe`**：只写日志，不读取游戏内存、不发包、不开 socket。先确认它被 MDL3 加载了。
+4. 按 [Hook 文档 §6](docs/HOOK.md) 逐级验证：`safe → net → recon → live`。`net` 只检查出口（UDP 或文件广播），`recon` 一次性验证数据源能不能读到本地玩家与生命记录。
+5. `live` 会优先用 HD2Runtime 公开 API；没装 Runtime 才降级到只读偏移。构建指纹不匹配时桥会**拒绝读取**，不要手填地址绕过。
+6. 使用 Mock、保持未武装，确认桌面端显示的血量、受伤、阵亡与复活均与游戏一致后，才进入下一步连接真机。
 
-**配置统一在 Fluent 桌面版或桥配置文件中修改，修改后需重启游戏。** 游戏内 MODS 菜单只显示连接信息和最近日志，不再提供配置控制项；重新打开 ESC 刷新信息。
+**配置**：本地 mod 形态在 MDL 设置页改选项；addon 形态只能改 `%LOCALAPPDATA%\hd2coyote\bridge_config.lua`。改完重启游戏。
+**出口**：`transport=auto` 先试 UDP，宿主没有 `ffi` 时自动落到文件广播 —— 此时控制器要在 `sources.enabled` 里启用 `bridge_file`。
 诊断区可以查看实际运行档位、状态与 recon 报告。详细步骤见 [Hook 文档](docs/HOOK.md)。
 
 ### 3. 连接手机与郊狼
@@ -249,7 +252,7 @@ Hook 无游戏联调：在一个终端运行 `run --mock`，另一个终端运�
 | [事件源](docs/SOURCES.md) | HTTP 协议、状态包与自定义源 |
 | [Rust 客户端](docs/RUST.md) / [Rust crates](crates/) | 新控制器实现、构建、测试与安全边界 |
 | [Python 参考实现](hd2coyote/) | 迁移期兼容基线与差分测试参考 |
-| [Lua 桥](lua/hd2_coyote_bridge.lua) / [工具](tools/) | 游戏内 addon、打包与模拟工具 |
+| [Lua 桥（MDL3 版）](addon/) / [工具](tools/) | 游戏内 addon 源码（16 个模块）、打包与模拟工具；旧版单文件在 [lua/](lua/hd2_coyote_bridge.lua) 仅作回滚 |
 | [测试](tests/) / [发布验收矩阵](docs/RELEASE_ACCEPTANCE.md) / [更新记录](CHANGELOG.md) | 回归测试、自动/人工验收边界与版本变更 |
 
 ```powershell
@@ -264,6 +267,7 @@ Hook 无游戏联调：在一个终端运行 `run --mock`，另一个终端运�
 - [YingXIAmour / DG-Lab-Punishment](https://github.com/YingXIAmour/DG-Lab-Punishment)：参考其易于上手的文档结构，以及事件源、波形管理、累积反馈与更新提示的设计思路。两者是独立项目，安装步骤与端口不同。
 - [LYQBING / DG-Lab-Game-Controller](https://github.com/LYQBING/DG-Lab-Game-Controller)：参考事件检测与设备控制分层的思路。
 - [DG-LAB 官方开源协议](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE)：设备与 Socket 协议资料。
+- **MDL3（麦当当3）**：0.8.0 起游戏内桥的前置 Lua mod 加载器。闭源、需自行安装，本项目只按它的公开契约对接，不分发也不内嵌。
 - 社区加载器、菜单和本地玩家定位参考的完整署名见 [第三方说明](THIRD_PARTY.md)。
 
 本项目采用 [MIT License](LICENSE)。与 Arrowhead Game Studios、Sony、DG-LAB 均无关联或官方背书。
