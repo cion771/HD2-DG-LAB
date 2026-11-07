@@ -172,6 +172,13 @@ class UpdateConfig:
 
 
 @dataclass
+class UiConfig:
+    """界面偏好。只影响本地窗口外观，不参与任何输出计算。"""
+
+    theme: str = "system"  # system 跟随 Windows 应用主题 / light / dark
+
+
+@dataclass
 class SafetyConfig:
     """安全限制。这些值在任何情况下都优先于规则强度。"""
 
@@ -206,6 +213,7 @@ class AppConfig:
     waves: WaveLibConfig = field(default_factory=WaveLibConfig)
     ramp: RampConfig = field(default_factory=RampConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
+    ui: UiConfig = field(default_factory=UiConfig)
     rules: dict[str, RuleConfig] = field(
         default_factory=lambda: {
             "damage": RuleConfig(
@@ -264,6 +272,7 @@ NESTED_TYPES: dict[str, type] = {
     "waves": WaveLibConfig,
     "ramp": RampConfig,
     "update": UpdateConfig,
+    "ui": UiConfig,
 }
 
 

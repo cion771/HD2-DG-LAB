@@ -241,7 +241,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         route = self.path.split("?", 1)[0]
         if route in ("/", "/index.html"):
-            self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
+            self._send(200, self.app.page_html().encode("utf-8"), "text/html; charset=utf-8")
         elif route == "/qr.svg":
             svg = self.app.qr_svg()
             if svg:
@@ -447,7 +447,12 @@ class WebApp:
             "bridge": bridge_diagnostics(self.bridge_cfg_dir),
             "startup": self._startup_checklist(),
             "update": self.update_info(),
+            "ui": {"theme": self.cfg.ui.theme},
         }
+
+    def page_html(self) -> str:
+        """把当前主题写进首屏，避免深色系统上先闪一帧白。"""
+        return PAGE.replace("__THEME_MODE__", self.cfg.ui.theme)
 
     def config_dict(self) -> dict[str, Any]:
         return self.cfg.to_dict()
@@ -638,6 +643,18 @@ class WebApp:
                     value = max(0.0, float(value))
                 setattr(self.cfg.ramp, key, value)
                 applied.append(f"ramp.{key}={value}")
+
+        # ---- 界面偏好（只影响本地窗口外观，不碰输出链路）
+        ui = patch.get("ui")
+        if isinstance(ui, dict) and ui:
+            for key, raw in ui.items():
+                if key != "theme":
+                    raise ValueError(f"未知界面配置字段：{key}（目前只有 theme）")
+                theme = str(raw).strip().lower()
+                if theme not in ("system", "light", "dark"):
+                    raise ValueError("ui.theme 只能是 system / light / dark")
+                self.cfg.ui.theme = theme
+                applied.append(f"ui.theme={theme}")
 
         # ---- 0.5.0：检查更新（只影响提示，不影响输出）
         update = patch.get("update") or {}

@@ -54,6 +54,12 @@ class TestRealPatches(unittest.TestCase):
                 cls.mod_files.append(path)
             except Exception:
                 cls.vanilla_files.append(path)
+        if not cls.mod_files:
+            # 0.8.0 起桥改走 MDL3（纯 Lua mod），不再往 data/ 写 patch 归档。
+            # 没有 mod 容器的机器上这批格式测试没有验证对象，明确跳过而不是误报失败。
+            raise unittest.SkipTest(
+                "游戏 data 目录里只有原版归档、没有 patch 型 mod 容器；"
+                "0.8.0 起桥走 MDL3，这类容器只存在于装了旧 addon 的机器上")
 
     def test_at_least_one_mod_archive(self) -> None:
         self.assertGreaterEqual(len(self.files), 1)

@@ -8,6 +8,7 @@ const VIEWS = {home:['主页概览','设备、游戏与输出状态，在这里�
 let closed = false, closing = false, online = false, timer, lastStatus, cfg, sourceData, waveData, qrKey = '', toastTimer;
 const initialized = new Set();
 function node(tag, cls, content) { const el = document.createElement(tag); if (cls) el.className = cls; if (content != null) el.textContent = content; return el; }
+function fillRange(el) { const max = Number(el.max) || 100; el.style.setProperty('--fill', Math.max(0, Math.min(100, Number(el.value) / Math.max(1, max) * 100)) + '%'); }
 function toast(message, error = false) { text('toast',message); $('toast').className = 'toast' + (error ? ' error' : ''); $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, error ? 8000 : 4000); }
 async function api(path, body) {
   const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 15000);
@@ -44,7 +45,7 @@ function markUnavailable(message, permanent = false) {
   ['meterA','meterB','hpbar'].forEach(id => { $(id).style.transform = 'scaleX(0)'; });
   text('armedBadge','状态未知'); text('deviceStatus','状态未知'); text('bridgeStatus','状态未知'); text('dev','状态未知');
   text('state','无法确认硬件输出，请在手机 App 核对并停止输出。');
-  ['serviceDot','bridgeDot','deviceDot'].forEach(id => { $(id).className = 'status-dot neutral'; });
+  ['serviceStatus','bridgeStatus','deviceStatus'].forEach(id => { $(id).className = ''; });
   $('qrwrap').replaceChildren(node('span','', '连接信息不可用')); qrKey = ''; controls();
 }
 function markClosed(message) {
@@ -56,7 +57,7 @@ function width(id, current, limit = 100) { const k = Math.max(0,Math.min(100,Num
 function renderEvents(events) {
   text('events',events.join('\n') || '暂无事件');
   const list = $('recentEvents'); list.replaceChildren();
-  if (!events.length) { list.append(node('div','empty-state','暂无事件。连接设备并开始检测后，事件会显示在这里。')); return; }
+  if (!events.length) { list.append(node('div','empty','暂无事件。连接设备并开始检测后，事件会显示在这里。')); return; }
   events.slice(-3).reverse().forEach(line => { const row = node('div','event'); row.append(node('time','',line.slice(0,8)),node('span','',line.slice(8).trim())); list.append(row); });
 }
 function renderDiagnostics(b) {
@@ -78,37 +79,38 @@ function renderStartup(startup) {
   setBadge('startupReady',startup.ready_to_arm ? '可以手动武装' : '尚未完成',startup.ready_to_arm ? 'good' : 'quiet');
   const list = $('startupSteps'); list.replaceChildren();
   Object.values(startup.steps || {}).forEach(step => {
-    const row = node('div','detail-row'); row.append(node('span','',step.label),node('b','',step.ok ? '已通过 · ' + step.detail : '待处理 · ' + step.detail)); list.append(row);
+    const row = node('div','row'); row.append(node('span','',step.label),node('b','',step.detail)); row.classList.add(step.ok ? 'ok' : 'todo'); list.append(row);
   });
   text('startupNote',startup.note || '检查向导不会自动武装输出。');
 }
 function render(s) {
   lastStatus = s; const c = s.controller, d = c.device, h = c.hook;
   online = true; document.body.classList.remove('unavailable'); $('connectionBanner').hidden = true;
-  text('ver','v' + c.version + ' · 本机服务'); text('footerVersion','v' + c.version);
-  text('serviceStatus',c.running ? '检测中' : '待机'); text('serviceDetail','控制服务在线 · 仅本机界面'); $('serviceDot').className = 'status-dot';
+  document.querySelector('[data-action="start"]').classList.toggle('primary', !c.running);
+  document.querySelector('[data-action="stop"]').classList.toggle('primary', c.running);
+  text('ver','v' + c.version); text('footerVersion','v' + c.version);
+  text('serviceStatus',c.running ? '检测中' : '待机'); text('serviceDetail','控制服务在线'); $('serviceStatus').className = c.running ? 'on' : '';
   text('pollState','刚刚同步'); setBadge('sessionBadge',c.running ? '检测运行中' : '控制器待机',c.running ? 'good' : 'quiet');
   const receiving = c.running && (c.sources || []).some(source => source.alive);
   const bridgeData = c.running && h.alive;
   const vision = (c.sources || []).find(source => source.name === 'vision');
   const visionData = c.running && !!vision?.alive;
   const validState = bridgeData || visionData;
-  text('bridgeStatus',vision ? (visionData ? 'HUD 状态在线' : '等待任务 HUD') : !h.listening ? '未监听游戏桥' : bridgeData ? '游戏状态在线' : h.connected ? '桥在线 · 数据未就绪' : '等待桥心跳');
-  text('bridgeDetail',vision ? vision.detail : h.detail || '请启用游戏桥事件源并开始检测；无需武装输出。'); $('bridgeDot').className = 'status-dot' + (validState ? '' : ' neutral');
+  text('bridgeStatus',vision ? (visionData ? 'HUD 状态在线' : '等待任务 HUD') : !h.listening ? '未监听游戏桥' : bridgeData ? '游戏状态在线' : h.connected ? '桥在线，数据未就绪' : '等待桥心跳');
+  text('bridgeDetail',vision ? vision.detail : h.detail || '请启用游戏桥事件源并开始检测；无需武装输出。'); $('bridgeStatus').className = validState ? 'on' : '';
   const mock = /mock/i.test(d.kind); text('deviceStatus',mock ? 'Mock 模拟' : d.connected ? '已连接' : '未连接');
   text('deviceDetail',mock ? '不连接真实硬件' : d.connected ? 'DG-LAB App 在线' : '在设备页连接手机');
-  $('deviceDot').className = 'status-dot' + (d.connected ? '' : ' neutral'); setBadge('dev',mock ? 'Mock 模拟设备' : d.connected ? '已连接' : '未连接',d.connected ? 'good' : 'quiet');
+  $('deviceStatus').className = d.connected ? 'on' : ''; setBadge('dev',mock ? 'Mock 模拟设备' : d.connected ? '已连接' : '未连接',d.connected ? 'good' : 'quiet');
   text('outA',c.output.a); text('outB',c.output.b); text('limitA',d.limit_a); text('limitB',d.limit_b);
   width('meterA',c.output.a,d.limit_a); width('meterB',c.output.b,d.limit_b); text('outPct',c.output.pct + '%'); text('sess',c.session_seconds + ' s');
-  setBadge('armedBadge',c.armed ? '已武装' : '已静音',c.armed ? 'warning' : 'quiet');
+  setBadge('armedBadge',c.armed ? '已武装' : '已静音',c.armed ? 'live' : 'quiet');
   text('state',c.last_error || c.mute_reason || (c.running ? '检测运行中，输出受安全上限约束。' : '尚未开始检测；请先确认设备与安全边界。'));
   const hpPct = c.hp_pct, hasData = validState && typeof hpPct === 'number' && Number.isFinite(hpPct);
   text('hp',hasData ? Math.round(hpPct) + '%' : '暂无'); width('hpbar',hasData ? hpPct : 0);
   const limbNames = ['头部','胸部','左臂','右臂','左腿','右腿'];
   text('limbs',vision ? '视觉源仅测血量' : hasData ? (c.limbs.map((x,i) => x ? limbNames[i] || '部位' + (i + 1) : '').filter(Boolean).join('、') || '未检测到损伤') : '等待有效数据');
   text('rampValue',c.ramp.enabled ? c.ramp.pct + '% / ' + c.ramp.ceiling_pct + '%' : '未启用');
-  text('src',(c.sources || []).map(x => x.label + ' · ' + (x.implemented === false ? '本客户端未实现' : x.alive ? '在线' : '等待')).join('；') || '尚未启动');
-  text('sourceBadge','事件源');
+  text('src',(c.sources || []).map(x => x.label + '，' + (x.implemented === false ? '本客户端未实现' : x.alive ? '在线' : '等待')).join('，') || '尚未启动');
   const key = d.qr_url || '';
   if (key !== qrKey) { qrKey = key; $('qrwrap').replaceChildren(); if (key) { const img = node('img'); img.alt = 'DG-LAB App 连接二维码，请勿分享'; img.src = '/qr.svg?t=' + Date.now(); img.onerror = () => { img.remove(); $('qrwrap').prepend(node('span','','二维码不可用，请检查设备服务。')); }; $('qrwrap').append(img,node('code','',key)); } }
   if (!key) $('qrwrap').replaceChildren(node('span','',mock ? 'Mock 模式无需扫码，也不会连接真实设备。' : '启动设备服务后，在这里显示连接二维码。'));
@@ -125,7 +127,7 @@ async function loadConfig() {
   Object.entries(cfg.rules).forEach(([key,rule]) => {
     const row = node('div','rule-row'), label = node('label'), check = node('input'), range = node('input'), out = node('output');
     check.type = 'checkbox'; check.id = 'r_' + key + '_on'; check.checked = rule.enabled; check.setAttribute('role','switch'); label.append(check,node('span','',RULE_NAMES[key] || key));
-    range.type = 'range'; range.id = 'r_' + key; range.min = 0; range.max = Math.max(100,rule.base_pct); range.step = 1; range.value = rule.base_pct; range.setAttribute('aria-label',(RULE_NAMES[key] || key) + '强度'); out.textContent = rule.base_pct + '%'; range.oninput = () => { out.textContent = range.value + '%'; }; row.append(label,range,out); rows.append(row);
+    range.type = 'range'; range.id = 'r_' + key; range.min = 0; range.max = Math.max(100,rule.base_pct); range.step = 1; range.value = rule.base_pct; range.setAttribute('aria-label',(RULE_NAMES[key] || key) + '强度'); out.textContent = rule.base_pct + '%'; fillRange(range); range.oninput = () => { out.textContent = range.value + '%'; fillRange(range); }; row.append(label,range,out); rows.append(row);
   });
   const fields = {master:cfg.safety.master_multiplier,channelA:cfg.safety.channel_a_multiplier,channelB:cfg.safety.channel_b_multiplier,maxpct:cfg.safety.max_pct,maxabs:cfg.safety.max_absolute,damageWindow:cfg.detect.damage_merge_window_ms,deviceKind:cfg.device.kind,deviceHost:cfg.device.host,devicePort:cfg.device.port,deviceAdvertise:cfg.device.advertise_ip,rpPerEvent:cfg.ramp.per_event,rpHp:cfg.ramp.hp_missing_pct,rpCeil:cfg.ramp.ceiling_pct,rpDecayAfter:cfg.ramp.decay_after_s,rpDecayPer:cfg.ramp.decay_per_s};
   Object.entries(fields).forEach(([id,v]) => { $(id).value = v; }); $('rpOn').checked = cfg.ramp.enabled; $('rpResetOnDeath').checked = cfg.ramp.reset_on_death;
@@ -145,15 +147,15 @@ async function loadWaves() {
   const w = waveData = await api('/api/waves'), selected = value('wPreset'); $('wPreset').replaceChildren();
   w.presets.forEach(p => { const option = node('option','',p); option.value = p; $('wPreset').append(option); }); $('wPreset').value = w.presets.includes(selected) ? selected : w.presets.includes('pinch') ? 'pinch' : w.presets[0];
   $('waveList').replaceChildren();
-  if (!w.waves.length) $('waveList').append(node('div','empty-state','波形库为空，规则仍可使用内置预设。'));
-  w.waves.forEach(row => { const button = node('button','wave-item'); button.type = 'button'; button.append(node('b','',row.name),node('small','',row.kind === 'units' ? row.unit_count + ' 个单元' : '预设 · ' + row.preset)); button.onclick = () => { $('wName').value = row.name; $('wUnits').value = (row.units || []).join(' '); $('wFreq').value = row.freq ?? ''; $('wPeak').value = row.peak ?? 100; if (row.preset) $('wPreset').value = row.preset; document.querySelectorAll('.wave-item').forEach(el => el.classList.remove('selected')); button.classList.add('selected'); text('wInfo','已选中「' + row.name + '」，修改后请保存。测试只使用已保存的版本。'); }; $('waveList').append(button); });
+  if (!w.waves.length) $('waveList').append(node('div','empty','波形库为空，规则仍可使用内置预设。'));
+  w.waves.forEach(row => { const button = node('button','wave-item'); button.type = 'button'; button.append(node('b','',row.name),node('small','',row.kind === 'units' ? row.unit_count + ' 个单元' : '预设：' + row.preset)); button.onclick = () => { $('wName').value = row.name; $('wUnits').value = (row.units || []).join(' '); $('wFreq').value = row.freq ?? ''; $('wPeak').value = row.peak ?? 100; if (row.preset) $('wPreset').value = row.preset; document.querySelectorAll('.wave-item').forEach(el => el.classList.remove('selected')); button.classList.add('selected'); text('wInfo','已选中「' + row.name + '」，修改后请保存。测试只使用已保存的版本。'); }; $('waveList').append(button); });
   text('wInfo','规则当前使用：' + Object.entries(w.rules).map(([k,v]) => (RULE_NAMES[k] || k) + ' → ' + v).join('、'));
 }
 async function navigate(name) {
   if (!VIEWS[name]) return;
   document.querySelectorAll('.view').forEach(el => { el.hidden = el.id !== 'view-' + name; });
   document.querySelectorAll('.nav-item').forEach(el => { const active = el.dataset.nav === name; el.classList.toggle('selected',active); if (active) el.setAttribute('aria-current','page'); else el.removeAttribute('aria-current'); });
-  text('breadcrumb',VIEWS[name][0]); text('pageTitle',VIEWS[name][0]); text('pageSubtitle',VIEWS[name][1]); window.scrollTo(0,0);
+  text('pageTitle',VIEWS[name][0]); text('pageSubtitle',VIEWS[name][1]); window.scrollTo(0,0);
   if (!initialized.has(name)) { const loader = {device:loadConfig,rules:loadConfig,waves:loadWaves,bridge:loadBridge,sources:loadSources}[name]; if (loader) await loader(); initialized.add(name); }
 }
 async function saveConfig(body) { const res = await api('/api/config',body); toast('设置已保存'); await refresh(); return res; }
@@ -171,7 +173,7 @@ async function shutdownApp() {
   catch (e) { closing = false; text('shutdownBtn','关闭程序'); markUnavailable('关闭结果未知：' + e.message + ' 请在手机 App 停止输出。'); }
 }
 const actions = {
-  theme:() => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'), shutdown:shutdownApp,
+  theme:() => setTheme(THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length],true), shutdown:shutdownApp,
   loadBridge,loadSources,loadWaves,
   calibrateVision:async () => {
     if (!await confirmAction('校准游戏 HUD 血条？','控制器会停止检测并保持静音。点击确定后有 5 秒切换到任务画面，保持血条可见。')) return;
@@ -179,7 +181,7 @@ const actions = {
     const result = await api('/api/vision/calibrate',{delay_s:5});
     const b = result.box, hp = result.hp_pct;
     $('visionPreview').src = result.preview; $('visionPreview').hidden = false;
-    text('visionCalibInfo','候选区域：' + [b.x,b.y,b.w,b.h].join(',') + ' · HP≈' + hp + '%；请核对下方预览。');
+    text('visionCalibInfo','候选区域 ' + [b.x,b.y,b.w,b.h].join(',') + '，HP≈' + hp + '%；请核对下方预览。');
     if (!await confirmAction('确认这是你的血条？','候选位置 '+[b.x,b.y,b.w,b.h].join(',')+'，当前读数约 '+hp+'%。请先查看预览图。若不符，取消并使用手动校准。')) return;
     await saveConfig({vision:{hp_bar:b,auto_locate:false}});
     toast('血条区域已保存；视觉源仍需手动开始检测并核对实时读数。');
@@ -213,8 +215,27 @@ document.querySelectorAll('[data-action]').forEach(button => button.addEventList
   const res = await api('/api/actions',{action:name}); toast(res.detail); await refresh();
 })));
 Object.entries(forms).forEach(([id,fn]) => $(id).addEventListener('submit',e => { e.preventDefault(); perform($(id).querySelector('[type=submit]'),fn); }));
-const media = matchMedia('(prefers-color-scheme: dark)'); let theme = 'system';
-function setTheme(mode) { theme = mode; document.documentElement.dataset.theme = mode === 'system' ? (media.matches ? 'dark' : 'light') : mode; $('themeSelect').value = mode; try { localStorage.setItem('hd2-theme',mode); } catch (_) {} }
-try { const saved = localStorage.getItem('hd2-theme'); if (['light','dark','system'].includes(saved)) theme = saved; } catch (_) {}
-setTheme(theme); media.addEventListener('change',() => { if (theme === 'system') setTheme(theme); }); $('themeSelect').addEventListener('change',() => setTheme(value('themeSelect')));
+const media = matchMedia('(prefers-color-scheme: dark)');
+const THEME_ORDER = ['system','light','dark'];
+const THEME_META = {system:['自动','#i-auto'], light:['浅色','#i-sun'], dark:['深色','#i-moon']};
+let theme = document.documentElement.dataset.themeMode || 'system';
+try { const saved = localStorage.getItem('hd2-theme'); if (THEME_META[saved]) theme = saved; } catch (_) {}
+function paintTheme() {
+  const meta = THEME_META[theme] || THEME_META.system;
+  document.documentElement.dataset.themeMode = theme;
+  document.documentElement.dataset.theme = theme === 'system' ? (media.matches ? 'dark' : 'light') : theme;
+  text('themeLabel',meta[0]);
+  const use = document.querySelector('#themeBtn use'); if (use) use.setAttribute('href',meta[1]);
+  $('themeBtn').title = '主题：' + meta[0] + '（点击切换）';
+  $('themeSelect').value = theme;
+}
+function setTheme(mode, persist) {
+  if (!THEME_META[mode]) return;
+  theme = mode; paintTheme();
+  try { localStorage.setItem('hd2-theme',mode); } catch (_) {}
+  if (persist) api('/api/config',{ui:{theme:mode}}).catch(() => {});
+}
+paintTheme();
+media.addEventListener('change',() => { if (theme === 'system') paintTheme(); });
+$('themeSelect').addEventListener('change',() => setTheme(value('themeSelect'),true));
 controls(); poll();

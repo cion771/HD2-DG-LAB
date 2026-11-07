@@ -226,6 +226,30 @@ class TestWebServer(unittest.TestCase):
         self.app.engine.arm()
         self.assertEqual(self.app.engine.safety.strength_for(100.0, 200), 25)
 
+    # ------------------------------------------------------------ 界面主题
+    def test_ui_theme_persists_and_reaches_the_page(self) -> None:
+        status, data = http("POST", self.base + "/api/config", {"ui": {"theme": "dark"}})
+        self.assertEqual(status, 200, data)
+        self.assertTrue(data["ok"])
+        self.assertIn("ui.theme=dark", data["applied"])
+        self.assertEqual(data["config"]["ui"]["theme"], "dark")
+        saved = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["ui"]["theme"], "dark")
+        # 状态快照与页面首屏都带上当前主题，深色系统上不会先闪白
+        _, st = http("GET", self.base + "/api/status")
+        self.assertEqual(st["ui"]["theme"], "dark")
+        _, page = http("GET", self.base + "/")
+        self.assertIn('data-theme-mode="dark"', page["raw"])
+        self.assertNotIn("__THEME_MODE__", page["raw"])
+
+    def test_ui_theme_rejects_unknown_or_invalid(self) -> None:
+        status, data = http("POST", self.base + "/api/config", {"ui": {"colour": "dark"}})
+        self.assertEqual(status, 400, data)
+        self.assertIn("未知界面配置字段", data["error"])
+        status, data = http("POST", self.base + "/api/config", {"ui": {"theme": "midnight"}})
+        self.assertEqual(status, 400, data)
+        self.assertIn("system / light / dark", data["error"])
+
     def test_post_config_rejects_out_of_range(self) -> None:
         status, data = http("POST", self.base + "/api/config", {"device": {"port": 80}})
         self.assertEqual(status, 400)

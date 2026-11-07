@@ -17,6 +17,25 @@ from .webui import build_server
 LOGGER = logging.getLogger(__name__)
 
 
+def system_prefers_dark() -> bool:
+    """读 Windows 的应用主题设置；读不到就按浅色处理。"""
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"SoftwareMicrosoftWindowsCurrentVersionThemesPersonalize") as key:
+            value, _kind = winreg.QueryValueEx(key, "AppsUseLightTheme")
+        return int(value) == 0
+    except Exception:
+        return False
+
+
+def window_background(theme: str) -> str:
+    """首帧底色跟界面主题一致，避免深色系统上白闪一下。"""
+    dark = theme == "dark" or (theme == "system" and system_prefers_dark())
+    return "#15171a" if dark else "#fbfbf9"
+
+
 def default_data_dir() -> Path:
     base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
     return base / "hd2-DG-LAB"
@@ -84,9 +103,10 @@ def run_desktop(config_path: str | Path | None = None,
     session = DesktopSession(cfg, path, bridge_cfg_dir)
     window_closed = threading.Event()
     try:
-        window = webview.create_window("HD2 · DG-LAB", session.url,
+        window = webview.create_window("HD2-DG-LAB", session.url,
                                        width=1180, height=850, min_size=(760, 600),
-                                       background_color="#f5f6f8", text_select=True)
+                                       background_color=window_background(cfg.ui.theme),
+                                       text_select=True)
         if window is None:
             raise RuntimeError("无法创建桌面窗口")
         session.start_hotkeys()
@@ -142,13 +162,13 @@ class SingleInstance:
 
 def notify_error(message: str) -> None:
     if sys.platform == "win32":
-        ctypes.windll.user32.MessageBoxW(None, message, "HD2 · DG-LAB", 0x10)
+        ctypes.windll.user32.MessageBoxW(None, message, "HD2-DG-LAB", 0x10)
     else:
         print(message, file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="HD2 · DG-LAB Windows 桌面控制台")
+    parser = argparse.ArgumentParser(description="HD2-DG-LAB Windows 桌面控制台")
     parser.add_argument("--config", help="显式指定配置；默认使用独立的本机应用数据目录")
     parser.add_argument("--bridge-dir", help="游戏内桥配置目录（默认与 Lua 桥共用）")
     parser.add_argument("--data-dir", help="桌面日志与 WebView2 数据目录")
@@ -159,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     instance = SingleInstance()
     try:
         if not instance.acquire():
-            notify_error("HD2 · DG-LAB 桌面程序已在运行，请切换到已有窗口。")
+            notify_error("HD2-DG-LAB 桌面程序已在运行，请切换到已有窗口。")
             return 0
         root = Path(args.data_dir).resolve() if args.data_dir else default_data_dir()
         root.mkdir(parents=True, exist_ok=True)

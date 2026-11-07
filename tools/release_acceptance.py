@@ -148,9 +148,18 @@ def desktop_exe_name(version: str) -> str:
     return f"HD2-DG-LAB-{version}.exe"
 
 
+def bridge_artifacts(dist: Path, version: str) -> tuple[Path | None, Path | None]:
+    """0.8.0 起桥走 MDL3：主包给 Arsenal/HD2MM，`-local` 包给本地 mod 目录。"""
+    main = dist / f"HD2-Coyote-{version}.zip"
+    if not main.is_file():
+        main = dist / f"HD2-Coyote-Bridge-{version}.zip"  # 0.7.x 及更早的命名
+    local = dist / f"HD2-Coyote-{version}-local.zip"
+    return (main if main.is_file() else None), (local if local.is_file() else None)
+
+
 def check_artifacts(dist: Path, version: str) -> list[Result]:
     exe = dist / desktop_exe_name(version)
-    bridge = dist / f"HD2-Coyote-Bridge-{version}.zip"
+    bridge, local = bridge_artifacts(dist, version)
     exe_header = b""
     if exe.is_file():
         with exe.open("rb") as handle:
@@ -160,17 +169,31 @@ def check_artifacts(dist: Path, version: str) -> list[Result]:
                        f"{exe.name}, {exe.stat().st_size if exe.exists() else 0} bytes")]
 
     zip_ok = False
-    zip_evidence = f"缺少 {bridge.name}"
-    if bridge.is_file():
+    zip_evidence = "缺少桥 ZIP"
+    if bridge is not None:
         try:
             with zipfile.ZipFile(bridge) as archive:
                 names = set(archive.namelist())
                 manifest = json.loads(archive.read("manifest.json"))
-                expected = "data/9ba626afa44a3aa3.patch_0"
-                zip_ok = expected in names and manifest.get("Options", [{}])[0].get("Include") == ["data"]
-                zip_evidence = f"manifest + {expected} + data Include 已验证"
+                patches = sorted(n for n in names
+                                 if re.fullmatch(r"data/9ba626afa44a3aa3\.patch_\d+", n))
+                zip_ok = bool(patches) and manifest.get("Options", [{}])[0].get("Include") == ["data"]
+                zip_evidence = (f"{bridge.name}: manifest + {patches[0]} + data Include 已验证"
+                                if zip_ok else f"{bridge.name} 布局不符：manifest/补丁/data Include")
         except (OSError, KeyError, IndexError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
             zip_evidence = f"桥 ZIP 无效：{exc}"
+    if zip_ok and local is not None:
+        try:
+            with zipfile.ZipFile(local) as archive:
+                local_names = set(archive.namelist())
+            if {"hd2coyote/mod.lua", "hd2coyote/entry.lua"} <= local_names:
+                zip_evidence += f"；{local.name}: 本地 mod 布局已验证"
+            else:
+                zip_ok = False
+                zip_evidence += f"；{local.name} 缺少 mod.lua/entry.lua"
+        except (OSError, zipfile.BadZipFile) as exc:
+            zip_ok = False
+            zip_evidence += f"；{local.name} 无效：{exc}"
     results.append(_result("AUT-07", "桥 ZIP 布局与 Arsenal manifest", zip_ok, zip_evidence))
 
     required_docs = ["DESKTOP.md", "HOOK.md", "UPGRADE.md", "RELEASE_ACCEPTANCE.md", "RELEASE_NOTES.md"]
