@@ -8,7 +8,8 @@ return function(H)
         M.cfg, M.log, M.net, M.clock = cfg, log, net, clock
         M.interval_ms = cfg.get('interval') * 1000
         M.beat_ms = cfg.get('heartbeat') * 1000
-        M.last_state, M.last_beat = 0, 0
+        -- 初始把两个时间戳都设成"现在"：hello 之后再立刻补一条心跳是纯噪声
+        M.last_state, M.last_beat = clock.now_ms(), clock.now_ms()
     end
 
     function M.attach(source, detail)
@@ -54,6 +55,11 @@ return function(H)
         if now - M.last_beat >= M.beat_ms then
             M.last_beat = now
             M.heartbeat(M.wait_reason)
+        end
+        -- 上报开关：关掉后只保留心跳（控制器仍能看出桥在线），不发状态
+        if not M.cfg.get('enabled') then
+            M.wait_reason = 'enabled=false（上报已关闭）'
+            return false
         end
         if not M.source then return false end
         if now - M.last_state < M.interval_ms then return false end

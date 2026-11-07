@@ -248,6 +248,16 @@ class TestMdl3Bridge(unittest.TestCase):
         self.assertEqual(packets[0]["ev"], "hello")
         self.assertTrue(any(p["ev"] == "state" for p in packets))
 
+    def test_enabled_false_sends_heartbeat_but_no_state(self) -> None:
+        """MDL3 选项里的「启用状态上报」必须真的生效（旧版靠 CONFIG.enabled 这道闸）。"""
+        self.write_config(mode="live", mock=True, transport="udp", interval=0.05, enabled=False)
+        self.load_mod()
+        self.tick(10)
+        packets = self.sent()
+        self.assertTrue(packets, "关掉上报后仍应有心跳")
+        self.assertFalse(any(p.get("ev") == "state" for p in packets),
+                         "enabled=false 时不应发送状态")
+
     def test_config_clamps_bad_values(self) -> None:
         self.write_config(mode="bogus", port=0, interval=999, transport="carrier-pigeon")
         self.rt.execute("MOD = load_module(ADDON_DIR, 'core/config', {})")

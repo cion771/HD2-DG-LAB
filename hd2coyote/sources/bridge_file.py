@@ -10,10 +10,8 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-import time
 from pathlib import Path
 from typing import Any
 
@@ -51,7 +49,7 @@ class BridgeFileSource(Source):
         #: 解析与事件判定复用 UDP 那条路的实现，绝不复制第二份状态机
         self.hook = HookSource(cfg, logger)
         self.path = state_path()
-        self._last_sig: tuple[int, int] | None = None
+        self._last_text: str | None = None
         self._last_read = 0.0
 
     # ------------------------------------------------------------- 委托
@@ -84,34 +82,26 @@ class BridgeFileSource(Source):
         self.started = False
 
     # ------------------------------------------------------------- 轮询
-    def _signature(self) -> tuple[int, int] | None:
+    def _read_text(self) -> str | None:
+        """读不到就返回 None，不抛错：桥正在写文件时 Windows 会短暂拒绝共享读。"""
         try:
-            st = self.path.stat()
-        except OSError:
-            return None
-        return (st.st_mtime_ns, st.st_size)
-
-    def _read_packet(self) -> dict | None:
-        try:
-            raw = self.path.read_text(encoding="utf-8", errors="strict").strip()
+            return self.path.read_text(encoding="utf-8", errors="strict")
         except (OSError, UnicodeDecodeError):
             return None
-        if not raw:
-            return None
-        line = raw.splitlines()[-1]
-        packet = self.hook._decode(line.encode("utf-8"))
-        return packet
 
     def poll(self, now: float) -> list[Event]:
         if now - self._last_read >= POLL_S:
             self._last_read = now
-            sig = self._signature()
-            if sig is not None and sig != self._last_sig:
-                self._last_sig = sig
-                packet = self._read_packet()
+            text = self._read_text()
+            # 内容没变就不重复计包；用内容而不是 mtime，
+            # 因为 NTFS 时间戳精度、写锁、以及"长度相同的两条报文"都会让 mtime 判据失真。
+            if text is not None and text.strip() and text != self._last_text:
+                self._last_text = text
+                line = text.strip().splitlines()[-1]
+                packet = self.hook._decode(line.encode("utf-8"))
                 if packet is not None:
                     self.hook.feed(packet, now)
-                elif self.path.exists():
+                else:
                     # 半个 JSON 就当掉包：和 UDP 坏包走同一条路，不推进状态
                     self.hook.state.bad_packets += 1
         events = self.hook.poll(now)
