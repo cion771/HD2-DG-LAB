@@ -5,6 +5,14 @@
 
 ---
 
+## 0.8.1
+
+- 修掉任务切换器里多出来的一张空白「HD2-DG-LAB」卡片：PyInstaller onefile 的隐藏辅助窗口
+  （`PyInstallerOnefileHiddenWindow`，1280×735、从不绘制）会被 Windows 11 的 Alt+Tab 列进去。
+  启动时把它标记为 `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE` 并隐藏，切换器只剩真正的窗口。
+- 纯外观修正，不影响检测、规则、输出或急停；桥 ZIP 与 0.8.0 只差 Lua 里的
+  `local VERSION` 一个字面量，**不需要重新部署**。
+
 ## 0.8.0
 
 **不兼容变更：游戏内桥的前置从 Bingus Shared Loader 换成 MDL3，并按模块整体重写。**

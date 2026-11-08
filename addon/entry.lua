@@ -8,7 +8,7 @@
 -- ★ MDL3 的 _G 可能是沙箱表（__index / __newindex 代理到真正的全局表）：
 --   只 rawget 会拿不到游戏已有的 update，只 rawset 又可能写不到游戏真正读的那张表。
 --   所以读用 rawget + 索引兜底，写用 rawset + 普通赋值各来一次。
-local VERSION = '0.8.0'
+local VERSION = '0.8.1'
 local NAME = 'mods/hd2coyote/hd2_coyote'
 
 local H = {

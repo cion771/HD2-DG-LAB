@@ -160,6 +160,39 @@ class SingleInstance:
             self.handle = None
 
 
+def suppress_bootloader_window() -> None:
+    """把 PyInstaller onefile 的隐藏辅助窗口从 Alt+Tab 里摘掉。
+
+    那个窗口是 bootloader 自己建的（1280x735、从不绘制），Windows 11 的 Alt+Tab
+    列表有时会把它也列成一张「HD2-DG-LAB」空白卡片。标记为工具窗口并隐藏即可。
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        user32.FindWindowW.restype = wintypes.HWND
+        hwnd = user32.FindWindowW("PyInstallerOnefileHiddenWindow", None)
+        if not hwnd:
+            return
+        GWL_EXSTYLE = -20
+        WS_EX_TOOLWINDOW = 0x00000080
+        WS_EX_NOACTIVATE = 0x08000000
+        user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+        user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+        style = user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
+        user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE,
+                                 style | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)
+        user32.ShowWindow(hwnd, 0)  # SW_HIDE
+        LOGGER.info("已把 PyInstaller 的隐藏辅助窗口标记为工具窗口（不再出现在 Alt+Tab）")
+    except Exception as exc:  # 纯外观问题，绝不因为它影响启动
+        LOGGER.warning("隐藏辅助窗口处理失败：%s", exc)
+
+
 def notify_error(message: str) -> None:
     if sys.platform == "win32":
         ctypes.windll.user32.MessageBoxW(None, message, "HD2-DG-LAB", 0x10)
@@ -188,6 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s | %(message)s"))
         logging.getLogger().addHandler(handler)
         logging.getLogger().setLevel(logging.INFO)
+        suppress_bootloader_window()
         try:
             run_desktop(args.config, args.bridge_dir, root)
         except Exception:

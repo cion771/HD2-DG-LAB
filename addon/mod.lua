@@ -5,7 +5,7 @@
 -- 说明：本 mod 只读游戏状态；不写游戏内存、不改游戏数据、不向外部网络发包。
 local ctx = ...
 
-local VERSION = '0.8.0'
+local VERSION = '0.8.1'
 local NAME = 'mods/hd2coyote/hd2_coyote'
 
 local function dir_of(ctx)
